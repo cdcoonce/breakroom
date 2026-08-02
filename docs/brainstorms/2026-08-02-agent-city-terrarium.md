@@ -90,6 +90,7 @@ Charles reframed mid-PRD: **breakroom is research-primary.** An instrumented ter
 - **Call-shape consequence:** flagged decision points resolve per-character on that character's model (research-valid attribution, small calls); scene performance renders in one narrator-model call (cost + coherence). This supersedes the plain one-call-per-scene reading.
 - **Gate rewritten (replaces outsider fun-votes):** world proof (5 floors / 12 cast / 1 cascade survived / ~30 fiction days) + instrument proof (≥3 observation write-ups drawn from traces; a stranger can replicate a tower with their own keys) + Charles's own verdict (drama reads real; running it is still fun).
 - **Audience reframe:** players → observers, readers, and replicators. Rigor posture is explicit: n=1 naturalistic case studies and an open instrument — observations, not claims.
+- **Decomposed same day:** 29 tracer-first slices filed as [breakroom#2–#30](https://github.com/cdcoonce/breakroom/issues) — tracer (#3) and the design quartet (#4–#7) HITL, 22 fleet-shaped slices labeled `proposed`/`afk-sized`; golden-tick CI gate is #30. afk enrollment of the repo is the remaining ops step before the fleet can drain.
 
 ## Related
 
