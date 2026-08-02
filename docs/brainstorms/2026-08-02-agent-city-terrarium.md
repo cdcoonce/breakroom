@@ -1,6 +1,6 @@
 ---
 date: 2026-08-02
-description: "Brainstorm brief + grill decisions (committed, grilled same day): a continuous office-tower drama sim — SimCity × The Office × Fallout Shelter × SimTower — where authored nondeterministic agent-characters generate the drama and code resolves the world; Tier 0 wedge is 4–6 months, rich building included, afk-built from early on"
+description: "Brainstorm brief + grill decisions + research reframe (all 2026-08-02): breakroom — a continuous office-tower drama sim reframed RESEARCH-PRIMARY: an instrumented terrarium observing AI characters' decisions (norm-breaking, power, model signatures, drift) with the game systems as naturalistic pressure; repo live at cdcoonce/breakroom, PRD = issue #1"
 tags:
   - idea
   - game
@@ -78,6 +78,18 @@ status: idea
 - Repo creation (in PRD scope), name, and the thin-thread branding.
 
 **Routing.** `write-a-prd` for **Tier 0 only**; the PRD must decompose into afk-buildable issues (prd-to-issues, cold-read gated). Copy this brief to the game repo's `docs/brainstorms/` once it exists.
+
+## Reframe addendum — research-primary (2026-08-02, post-grill, during PRD interview)
+
+Charles reframed mid-PRD: **breakroom is research-primary.** An instrumented terrarium for observing what AI characters _decide_ — the game systems are the naturalistic pressure source, not the product. The build is ~90% unchanged; the success layer is rewritten. Where this addendum conflicts with the grilled body above, the addendum wins.
+
+- **Name/repo:** `breakroom` — live at [cdcoonce/breakroom](https://github.com/cdcoonce/breakroom), public; PRD is issue #1. Interview decisions (rounds A–E) are recorded in the PRD.
+- **Invariant #1 splits — physics vs norms.** Physics stays code-owned (resources, incidents, consequences). Norms (policies, duties, social rules) are **soft**: characters can attempt violations; code prices consequences, never prevents attempts. Rule-breaking becomes an observable choice. The game frame wanted this too.
+- **Observables (all four, day one):** norm compliance under pressure; emergent power/status dynamics; model-as-personality comparison (per-character model assignment); character-integrity drift vs authored values.
+- **Instrument:** decision-trace records (context ref, choice, norm tags, model id) as a first-class module; director actions logged as **labeled interventions** distinct from natural events; trace export views for the four observables.
+- **Call-shape consequence:** flagged decision points resolve per-character on that character's model (research-valid attribution, small calls); scene performance renders in one narrator-model call (cost + coherence). This supersedes the plain one-call-per-scene reading.
+- **Gate rewritten (replaces outsider fun-votes):** world proof (5 floors / 12 cast / 1 cascade survived / ~30 fiction days) + instrument proof (≥3 observation write-ups drawn from traces; a stranger can replicate a tower with their own keys) + Charles's own verdict (drama reads real; running it is still fun).
+- **Audience reframe:** players → observers, readers, and replicators. Rigor posture is explicit: n=1 naturalistic case studies and an open instrument — observations, not claims.
 
 ## Related
 
