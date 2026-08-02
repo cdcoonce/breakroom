@@ -15,6 +15,10 @@ status: idea
 
 **Problem.** Build a game as a real side project: a nondeterministic character-drama world that produces curiosity and tension, keeps surprising its player, and can grow into a big, grand, possibly not-solo thing.
 
+## Current Status
+
+Shipped end-to-end 2026-08-02: [cdcoonce/breakroom](https://github.com/cdcoonce/breakroom) is live and public with the PRD as [breakroom#1](https://github.com/cdcoonce/breakroom/issues/1) and 29 tracer-first slices filed as #2–#30 (tracer #3, design quartet #4–#7, onboarding #28, founding cast #29 are HITL; 22 slices labeled `proposed`/`afk-sized`; golden-tick CI gate is #30). Nothing is built yet. Next: hand-build the scaffold (#2) and tracer (#3) for first life, then afk-enroll the repo (config must set `allowed_tools` or the executor runs no Bash) so the fleet drains the engine slices while Charles takes the design quartet. Build pace is [[pulse-weekly-work-ledger|pulse]]-paced through ASU Fall; this is the primary hand-time slot, with [[afk-agent-system]] carrying the other queues.
+
 **The game.** **SimCity × The Office × Fallout Shelter × SimTower.** One continuous office tower you construct and staff. **Character drama is the tension engine** — relationships, rivalries, schemes; the management sim is the stage machinery that generates collisions. Fallout contributes Shelter's mechanics only (characters with stats assigned to rooms, cascading incidents, resource dials) — no post-apoc setting or IP adjacency. Your verbs (author+god+builder seat, never protagonist): hand-author characters, build the tower (layout is org design — it decides who meets whom), inject events through a director agent, hire from a sim-generated applicant pool (interview/edit/approve — authoring stays a continuous verb).
 
 **World rules (grilled).**
