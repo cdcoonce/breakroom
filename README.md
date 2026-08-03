@@ -8,7 +8,18 @@ You are the author, the architect, and the meddling god: write the cast as data,
 
 ## Status
 
-Pre-build. The Tier 0 PRD is [issue #1](https://github.com/cdcoonce/breakroom/issues/1). Design provenance: [docs/brainstorms/2026-08-02-agent-city-terrarium.md](docs/brainstorms/2026-08-02-agent-city-terrarium.md) (brainstormed, grilled through 25 logged decisions, and interviewed into a PRD on 2026-08-02).
+First tracer. The Tier 0 PRD is [issue #1](https://github.com/cdcoonce/breakroom/issues/1). Design provenance: [docs/brainstorms/2026-08-02-agent-city-terrarium.md](docs/brainstorms/2026-08-02-agent-city-terrarium.md) (brainstormed, grilled through 25 logged decisions, and interviewed into a PRD on 2026-08-02).
+
+## Quickstart
+
+```bash
+uv sync
+uv run breakroom init --world .world --seed 42
+uv run breakroom tick --world .world
+uv run breakroom tick --world .world
+```
+
+The starter tracer writes structured state under `.world/state/`, a provisional TOML character under `.world/characters/`, append-only events to `.world/events.jsonl`, and daily chronicle digests under `.world/chronicles/`.
 
 ## The bet
 

@@ -1,0 +1,35 @@
+# AFK config — breakroom.
+# Trunk is main. The executor gate mirrors CI: lint first, then the deterministic tests.
+test_command = "uv run ruff check . && uv run pytest -q"
+permission_mode = "acceptEdits"
+trunk_branch = "main"
+
+# Forwarded to the headless agent as --allowedTools. Without this, fresh worktrees cannot
+# run Bash unattended and slices block before the gate proves anything.
+allowed_tools = [
+  "Bash(uv sync:*)",
+  "Bash(uv run ruff:*)",
+  "Bash(uv run pytest:*)",
+  "Bash(uv run python:*)",
+  "Bash(uv --version:*)",
+  "Bash(python3:*)",
+  "Bash(python:*)",
+]
+
+agent_prompt = """Implement the linked GitHub issue using test-driven development \
+(red-green-refactor). Keep changes minimal and scoped to the issue's acceptance criteria. \
+Preserve the core invariants: outcomes are computed by code, events are append-only, and \
+scene briefs are assembled from structured state rather than freeform transcript memory. \
+Never make live model calls in tests or CI."""
+
+[caps]
+max_retries = 2
+timeout_seconds = 1800
+
+[model]
+cheap = "sonnet"
+frontier = "opus"
+default_tier = "cheap"
+
+[cycle]
+producers = ["scout", "harvest"]
