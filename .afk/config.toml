@@ -22,6 +22,13 @@ Preserve the core invariants: outcomes are computed by code, events are append-o
 scene briefs are assembled from structured state rather than freeform transcript memory. \
 Never make live model calls in tests or CI."""
 
+# auto_promote stays OFF, and this is the load-bearing gate for the repo. Every slice
+# here is a hand-authored spec off the #1 PRD rather than a scout proposal, and a wrong
+# spec that reads consistently still builds and still ships wrong. Promotion is manual
+# (`afk-driver --promote N`) and only after a /cold-read pass. Top-level key on purpose:
+# nested under [cycle] it reads as False silently (afk#938).
+auto_promote = false
+
 [caps]
 max_retries = 2
 timeout_seconds = 1800
