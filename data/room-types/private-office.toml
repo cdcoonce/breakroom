@@ -1,0 +1,6 @@
+id = "private-office"
+name = "Private Office"
+capacity = 1
+assignable = true
+slots = 1
+storylet_hooks = ["room:private-office"]

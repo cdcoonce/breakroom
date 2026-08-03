@@ -1,0 +1,6 @@
+id = "executive-suite"
+name = "Executive Suite"
+capacity = 2
+assignable = true
+slots = 2
+storylet_hooks = ["room:executive-suite"]

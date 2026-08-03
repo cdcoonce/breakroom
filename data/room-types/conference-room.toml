@@ -1,0 +1,6 @@
+id = "conference-room"
+name = "Conference Room"
+capacity = 8
+assignable = false
+slots = 2
+storylet_hooks = ["room:conference-room"]

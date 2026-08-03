@@ -1,0 +1,6 @@
+id = "server-closet"
+name = "Server Closet"
+capacity = 2
+assignable = false
+slots = 1
+storylet_hooks = ["room:server-closet"]

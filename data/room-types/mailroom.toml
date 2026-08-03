@@ -1,0 +1,6 @@
+id = "mailroom"
+name = "Mailroom"
+capacity = 2
+assignable = false
+slots = 1
+storylet_hooks = ["room:mailroom"]

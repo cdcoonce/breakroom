@@ -1,0 +1,6 @@
+id = "supply-closet"
+name = "Supply Closet"
+capacity = 1
+assignable = false
+slots = 1
+storylet_hooks = ["room:supply-closet"]

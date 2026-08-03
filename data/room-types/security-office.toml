@@ -1,0 +1,6 @@
+id = "security-office"
+name = "Security Office"
+capacity = 2
+assignable = true
+slots = 1
+storylet_hooks = ["room:security-office"]

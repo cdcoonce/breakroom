@@ -1,0 +1,6 @@
+id = "cafeteria"
+name = "Cafeteria"
+capacity = 20
+assignable = false
+slots = 3
+storylet_hooks = ["room:cafeteria"]

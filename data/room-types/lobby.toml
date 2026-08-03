@@ -1,0 +1,6 @@
+id = "lobby"
+name = "Lobby"
+capacity = 15
+assignable = false
+slots = 2
+storylet_hooks = ["room:lobby"]

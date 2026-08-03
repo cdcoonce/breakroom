@@ -1,0 +1,6 @@
+id = "break-room"
+name = "Break Room"
+capacity = 10
+assignable = false
+slots = 2
+storylet_hooks = ["room:break-room"]

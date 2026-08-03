@@ -1,0 +1,6 @@
+id = "open-office"
+name = "Open Office"
+capacity = 12
+assignable = true
+slots = 3
+storylet_hooks = ["room:open-office"]
