@@ -41,9 +41,82 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         next_state["day"] = max(next_state["day"], event["day"])
         for dial, delta in event["dials"].items():
             next_state[dial] += delta
+    elif event_type == "edge_delta":
+        next_state["day"] = max(next_state["day"], event["day"])
+        _apply_edge_delta(next_state, event)
     else:
         raise ValidationError(f"event type unsupported: {event_type}")
     return next_state
+
+
+def edge_qualities(state: dict[str, Any], from_id: str, to_id: str) -> dict[str, Any]:
+    pair = state.get("edges", {}).get(_pair_key(from_id, to_id), {})
+    return copy.deepcopy(pair)
+
+
+def character_edges(state: dict[str, Any], character_id: str) -> list[dict[str, Any]]:
+    results = []
+    for pair_key, qualities in state.get("edges", {}).items():
+        from_id, to_id = _split_pair_key(pair_key)
+        if from_id == character_id or to_id == character_id:
+            results.append({"from": from_id, "to": to_id, "qualities": copy.deepcopy(qualities)})
+    return results
+
+
+def edges_at_or_above(state: dict[str, Any], quality: str, threshold: int) -> list[dict[str, Any]]:
+    results = []
+    for pair_key, qualities in state.get("edges", {}).items():
+        entry = qualities.get(quality)
+        if entry is not None and entry["value"] >= threshold:
+            from_id, to_id = _split_pair_key(pair_key)
+            results.append({"from": from_id, "to": to_id, "value": entry["value"]})
+    return results
+
+
+def edge_provenance(state: dict[str, Any], from_id: str, to_id: str, quality: str) -> list[str]:
+    pair = state.get("edges", {}).get(_pair_key(from_id, to_id), {})
+    entry = pair.get(quality)
+    if entry is None:
+        return []
+    return [change["event_id"] for change in entry["history"]]
+
+
+def _pair_key(from_id: str, to_id: str) -> str:
+    return f"{from_id}->{to_id}"
+
+
+def _split_pair_key(pair_key: str) -> tuple[str, str]:
+    from_id, to_id = pair_key.split("->", 1)
+    return from_id, to_id
+
+
+def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
+    event_id = event.get("event_id")
+    if not event_id:
+        raise ValidationError("edge_delta event: missing event_id")
+    for field in ("from", "to", "edges"):
+        if field not in event:
+            raise ValidationError(f"edge_delta event: missing {field}")
+
+    pair_key = _pair_key(event["from"], event["to"])
+    edges = state.setdefault("edges", {})
+    pair = edges.setdefault(pair_key, {})
+    for quality, change in event["edges"].items():
+        entry = pair.setdefault(quality, {"value": 0, "floor": None, "history": []})
+        delta = change.get("delta", 0)
+        floor = change.get("floor")
+
+        effective_floor = entry["floor"]
+        if floor is not None:
+            effective_floor = floor if effective_floor is None else min(effective_floor, floor)
+
+        value = entry["value"] + delta
+        if effective_floor is not None:
+            value = min(value, effective_floor)
+
+        entry["value"] = value
+        entry["floor"] = effective_floor
+        entry["history"].append({"event_id": event_id, "delta": delta, "floor": floor})
 
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:
