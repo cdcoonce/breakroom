@@ -7,3 +7,10 @@ __pycache__/
 
 .secrets/
 .world/
+
+# afk run artifacts the driver writes into this repo on every `--cycle` (keep .afk/config.toml,
+# ignore the noise). Tracking any of them wedges the nightly: the run writes, nothing commits,
+# and the next preflight aborts on a dirty tree. docs/dev-cycle/ already has its own `*`.
+.afk/transcripts/
+.afk/worktrees/
+.afk/mailbox/
