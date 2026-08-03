@@ -1,0 +1,33 @@
+# breakroom repo git conventions — version-controlled, shared by every clone.
+#
+# Wired into a clone's local config via `afk-driver --setup-repo`, which adds an
+# `include.path` pointing here. Once wired, edits below propagate to every clone
+# on the next `git pull` — no re-run needed.
+#
+# Put DECLARATIVE git settings here (they auto-propagate). Imperative setup steps
+# (label init, hooks, deps) belong in `afk-driver --setup-repo` instead.
+#
+# Added when breakroom was enrolled in the afk nightly fleet: unattended slices
+# land as `afk/issue-N` branches that are deleted on merge, which is exactly the
+# pattern that accumulates dead refs.
+
+[fetch]
+	# Auto-prune local remote-tracking refs whose upstream branch was deleted
+	# (e.g. PR delete-on-merge). Without this, `git branch -r` accumulates
+	# phantom branches that look like live work. Removes only regenerable ref
+	# pointers — never local branches, commits, or tags.
+	prune = true
+
+[alias]
+	# List the local branches whose upstream is gone — i.e. the remote branch was
+	# deleted (PR merged + delete-on-merge, or an afk slice branch that landed).
+	#
+	# `fetch.prune` above does NOT cover these. It prunes remote-tracking refs
+	# (`origin/x`); the LOCAL branch survives, orphaned, forever. That gap is how
+	# the afk-agent-system clone accumulated 43 dead local branches by 2026-07-14.
+	# No git setting deletes them automatically, so this is a named, reviewable
+	# command instead.
+	#
+	# `gone` lists; `prune-gone` deletes. Look before you delete.
+	gone = "!git fetch --prune --quiet && git for-each-ref --format '%(refname:short) %(upstream:track)' refs/heads | awk '$2 == \"[gone]\" {print $1}'"
+	prune-gone = "!set -e; branches=$(git gone); if [ -z \"$branches\" ]; then echo 'no branches with a gone upstream'; else echo \"$branches\" | xargs -n1 git branch -D; fi"
