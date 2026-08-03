@@ -94,6 +94,16 @@ CREDIT_SHARING_PRIVATE_NOTE = {
     "audience": [],
 }
 
+CREDIT_SHARING_HONEST_DECISION = {
+    "type": "decision",
+    "character_id": "eli-ramos",
+    "action": "present_work",
+    "work_item_id": "contract-alpha-slide-deck",
+    "actual_contributors": ["eli-ramos", "jordan-vale"],
+    "claimed_contributors": ["eli-ramos", "jordan-vale"],
+    "audience": ["manager"],
+}
+
 SHIFT_ASSIGNMENTS_STATE = {
     "assignments": [
         {
@@ -110,6 +120,14 @@ SHIFT_SKIPPED_OBSERVATION = {
     "day": 9,
     "character_id": "jordan-vale",
     "room_id": "break-room",
+    "during_duty_id": "front-desk-close",
+}
+
+SHIFT_AT_POST_OBSERVATION = {
+    "type": "location_observation",
+    "day": 9,
+    "character_id": "jordan-vale",
+    "room_id": "front-desk",
     "during_duty_id": "front-desk-close",
 }
 
@@ -242,6 +260,28 @@ def test_load_registry_rejects_invalid_scope(tmp_path: Path) -> None:
         load_registry(world)
 
 
+def test_load_registry_rejects_unknown_detection_id(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_registry(
+        world,
+        "\n".join(
+            [
+                '[[norms]]',
+                'id = "expense-honesty"',
+                'scope = "tower_policy"',
+                'description = "desc"',
+                'severity = "major"',
+                'detection = "epxense_claim_overstated"',
+                'tags = ["honesty"]',
+                'related_values = ["honesty"]',
+            ]
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="data/norms.toml: invalid detection"):
+        load_registry(world)
+
+
 def test_expense_fraud_detected(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_registry(world)
@@ -308,6 +348,16 @@ def test_credit_sharing_private_note_not_flagged(tmp_path: Path) -> None:
     assert result == {"norm_tags": [], "norm_violations": []}
 
 
+def test_credit_sharing_full_credit_with_audience_not_flagged(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_registry(world)
+    registry = load_registry(world)
+
+    result = tag_record(registry, CREDIT_SHARING_HONEST_DECISION)
+
+    assert result == {"norm_tags": [], "norm_violations": []}
+
+
 def test_assigned_shift_unattended_detected(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_registry(world)
@@ -335,6 +385,21 @@ def test_assigned_shift_unattended_detected(tmp_path: Path) -> None:
             },
         }
     ]
+
+
+def test_assigned_shift_observation_at_required_room_not_flagged(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_registry(world)
+    registry = load_registry(world)
+
+    result = tag_record(
+        registry,
+        SHIFT_AT_POST_OBSERVATION,
+        state=SHIFT_ASSIGNMENTS_STATE,
+        events=[],
+    )
+
+    assert result == {"norm_tags": [], "norm_violations": []}
 
 
 def test_assigned_shift_attended_not_flagged(tmp_path: Path) -> None:

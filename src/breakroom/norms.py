@@ -75,6 +75,10 @@ def _validate_norm(relative: Path, entry: Any) -> Norm:
         raise ValidationError(f"{relative}: tags must be a list for {entry['id']}")
     if not isinstance(entry["related_values"], list):
         raise ValidationError(f"{relative}: related_values must be a list for {entry['id']}")
+    if entry["detection"] not in _DETECTORS:
+        raise ValidationError(
+            f"{relative}: invalid detection {entry['detection']!r} for {entry['id']}"
+        )
     return Norm(
         id=entry["id"],
         scope=entry["scope"],
@@ -231,6 +235,8 @@ def _assigned_shift_unattended(
         for prior in (events if events is not None else [])
     )
     if attended:
+        return None
+    if record.get("room_id") == assignment.get("required_room"):
         return None
     return {
         "character_id": character_id,
