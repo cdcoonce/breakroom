@@ -1,0 +1,6 @@
+id = "kitchen"
+name = "Kitchen"
+capacity = 6
+assignable = false
+slots = 2
+storylet_hooks = ["room:kitchen"]

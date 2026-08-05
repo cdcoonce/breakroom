@@ -1,0 +1,6 @@
+id = "hr-suite"
+name = "HR Suite"
+capacity = 3
+assignable = true
+slots = 1
+storylet_hooks = ["room:hr-suite"]
