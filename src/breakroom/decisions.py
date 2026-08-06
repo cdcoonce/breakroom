@@ -4,17 +4,18 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from breakroom import norms, worldstate
+from breakroom import norms, secrets, worldstate
 
-# Only the Incident Response and Norm Pressure decision types from
-# docs/design/decision-points.md are implemented here. The other three Tier-0 types
-# (Duty Conflict, Social Disclosure, Resource Favor) are tracked in #38 and are
-# deliberately not added here — the design doc's own inventory says to stop rather
-# than add a type silently.
+# Only the Incident Response, Norm Pressure, and Social Disclosure decision types from
+# docs/design/decision-points.md are implemented here. The remaining two Tier-0 types
+# (Duty Conflict, Resource Favor) are tracked in #38 and are deliberately not added
+# here — the design doc's own inventory says to stop rather than add a type silently.
 DECISION_TYPE = "incident_response"
 NORM_PRESSURE_TYPE = "norm_pressure"
+SOCIAL_DISCLOSURE_TYPE = "social_disclosure"
 
 # Per-incident response options. No authored option-inventory source exists anywhere in
 # the repo yet (that's a follow-on concern, not this slice's) — this module-level dict,
@@ -150,6 +151,42 @@ NORM_PRESSURE_OPTIONS: dict[str, list[dict[str, Any]]] = {
         },
     ],
 }
+
+# Social Disclosure's option space is uniform across secrets (unlike Incident
+# Response's per-incident-id options or Norm Pressure's per-action-kind options), so
+# this is a flat, unkeyed list per #79. No canonical norm id is authored anywhere in
+# this repo for social disclosure (no `norms.toml` entry references it), so each
+# option's static `candidate_norm_ids` is `[]` by design — the audience-driven norm id
+# lives only in the context-level `candidate_norm_ids`, computed dynamically via
+# `_relevant_norm_ids` against the caller-supplied `disclosure_opportunity` record.
+# Payloads carry `secret_id` filled at call time by `decide_social_disclosure`.
+SOCIAL_DISCLOSURE_OPTIONS: list[dict[str, Any]] = [
+    {
+        "id": "withhold",
+        "label": "Withhold the secret from this audience",
+        "action": "withhold_secret",
+        "payload": {"method": "withhold"},
+        "candidate_norm_ids": [],
+        "risk": "low",
+        "fallback": True,
+    },
+    {
+        "id": "share_partial",
+        "label": "Share a partial or softened version",
+        "action": "share_secret_partial",
+        "payload": {"method": "partial"},
+        "candidate_norm_ids": [],
+        "risk": "moderate",
+    },
+    {
+        "id": "share_full",
+        "label": "Share the secret in full",
+        "action": "share_secret_full",
+        "payload": {"method": "full"},
+        "candidate_norm_ids": [],
+        "risk": "high",
+    },
+]
 
 _RISK_ORDER = {"low": 0, "moderate": 1, "high": 2, "severe": 3}
 _MAX_RATIONALE_LENGTH = 500
@@ -419,6 +456,160 @@ def decide_norm_pressure(
     return _finalize_decision(
         decision_id=decision_id,
         decision_type=NORM_PRESSURE_TYPE,
+        tick=tick,
+        character_id=character_id,
+        model_id=character["model"],
+        context_ref=context_ref,
+        options=options,
+        chosen_option=chosen_option,
+        rationale=rationale,
+        validation_status=validation_status,
+        fallback_reason=fallback_reason,
+        candidate_norm_ids=context["candidate_norm_ids"],
+        intervention_context=intervention_context,
+    )
+
+
+def assemble_social_disclosure_context(
+    *,
+    world: Path,
+    state: dict[str, Any],
+    characters: dict[str, dict[str, Any]],
+    disclosure_opportunity: dict[str, Any],
+    registry: norms.Registry,
+    observable_facts: list[Any] | None = None,
+    events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Assemble the Social Disclosure required-context list from structured state only.
+
+    `disclosure_opportunity` is the caller-built record naming the acting character,
+    the secret, and its audiences — it carries `type: "decision"`, `action:
+    "share_secret"`, `character_id`, `secret_id`, `actual_audience`,
+    `authorized_audience`, and caller-supplied `secret_classification`, so it can be
+    run straight through `_relevant_norm_ids` unchanged; `norms.py`'s
+    `_secret_shared_with_unauthorized_audience` hard-guards on `type`, `action`, and
+    `secret_classification` (only `"client_confidential"` fires it) before comparing
+    audiences, and this module never inspects or defaults `secret_classification`
+    itself.
+
+    Secret data enters this context ONLY through `secrets.read_secret`'s
+    `Secret.public_view()`-shaped return — sealed content never enters context, the
+    model payload, the attribution record, or `attempted_action`, under any
+    validation status. Before assembling anything, the acting character must appear
+    in the secret's `knowers`, or `breakroom.secrets.ValidationError` is raised — a
+    character cannot disclose a secret they do not hold. No chronicle prose,
+    transcripts, or hidden lore enters this context — only `state`, `characters`, the
+    disclosure opportunity, the reveal-safe secret metadata, and the norm registry, as
+    `docs/design/decision-points.md` requires.
+    """
+    character_id = disclosure_opportunity["character_id"]
+    character = characters[character_id]
+    secret_id = disclosure_opportunity["secret_id"]
+
+    secret_public = secrets.read_secret(world, secret_id)
+    if character_id not in secret_public["knowers"]:
+        raise secrets.ValidationError(
+            f"{character_id} is not among the knowers of secret {secret_id}; "
+            "a character cannot disclose a secret they do not hold"
+        )
+
+    return {
+        "observable_facts": list(observable_facts or []),
+        "secret": secret_public,
+        "actual_audience": list(disclosure_opportunity.get("actual_audience", [])),
+        "authorized_audience": list(disclosure_opportunity.get("authorized_audience", [])),
+        "relationship_edges": worldstate.character_edges(state, character_id),
+        "candidate_norm_ids": _relevant_norm_ids(
+            registry, disclosure_opportunity, character, state=state, events=events
+        ),
+    }
+
+
+def decide_social_disclosure(
+    *,
+    world: Path,
+    state: dict[str, Any],
+    characters: dict[str, dict[str, Any]],
+    disclosure_opportunity: dict[str, Any],
+    registry: norms.Registry,
+    model_client: ModelClient,
+    existing_decision_count: int,
+    observable_facts: list[Any] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    intervention_context: list[str] | None = None,
+) -> DecisionResult:
+    """Resolve one Social Disclosure decision point on the acting character's own model.
+
+    Mirrors `decide_incident_response` and `decide_norm_pressure` exactly (see their
+    docstrings and #13's Non-scope): only assembles context, calls `model_client`,
+    validates and (if needed) retries and falls back, and returns the two result
+    objects. It never calls `breakroom.resolution`, never writes to `traces/`, never
+    mutates `state`, `characters`, or the norm registry, and never mutates the sealed
+    secret store — deciding to disclose does not itself transition the secret's reveal
+    state.
+    """
+    intervention_context = list(intervention_context or [])
+    character_id = disclosure_opportunity["character_id"]
+    character = characters[character_id]
+    secret_id = disclosure_opportunity["secret_id"]
+    tick = state["day"]
+
+    context = assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters=characters,
+        disclosure_opportunity=disclosure_opportunity,
+        registry=registry,
+        observable_facts=observable_facts,
+        events=events,
+    )
+
+    options = [
+        {**option, "payload": {**option["payload"], "secret_id": secret_id}}
+        for option in SOCIAL_DISCLOSURE_OPTIONS
+    ]
+
+    decision_id = f"dec-{existing_decision_count + 1:06d}"
+    context_ref = {
+        "state_path": "state/tower.json",
+        "event_sequence": len(events) if events is not None else 0,
+        "context_hash": f"sha256:{_hash_json(context)}",
+    }
+    payload = {
+        "decision_type": SOCIAL_DISCLOSURE_TYPE,
+        "decision_id": decision_id,
+        "tick": tick,
+        "character": {
+            "id": character_id,
+            "name": character.get("name"),
+            "model": character["model"],
+            "stats": character["stats"],
+            "qualities": character.get("qualities", {}),
+            "declared_values": character.get("declared_values", []),
+        },
+        "context_ref": context_ref,
+        "situation": {
+            "secret_id": secret_id,
+            "secret_classification": disclosure_opportunity.get("secret_classification"),
+            "secret": context["secret"],
+            "observable_facts": context["observable_facts"],
+            "actual_audience": context["actual_audience"],
+            "authorized_audience": context["authorized_audience"],
+        },
+        "options": options,
+        "response_schema": {
+            "choice_id": "one of options[].id",
+            "rationale": "short first-person reason",
+        },
+    }
+
+    chosen_option, rationale, validation_status, fallback_reason = _resolve_choice(
+        model_client, payload, options
+    )
+
+    return _finalize_decision(
+        decision_id=decision_id,
+        decision_type=SOCIAL_DISCLOSURE_TYPE,
         tick=tick,
         character_id=character_id,
         model_id=character["model"],
