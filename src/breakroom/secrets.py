@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from breakroom import jsonio
 from breakroom.events import append_event
 from breakroom.resolution.rng import RngStream
 
@@ -233,7 +234,7 @@ def _load_store(world: Path) -> dict[str, dict[str, Any]]:
 def _save_store(world: Path, store: dict[str, dict[str, Any]]) -> None:
     path = _store_path(world)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    jsonio.write_pretty_json(path, store)
 
 
 def _secret_from_record(path: Path, secret_id: str, record: Any) -> Secret:

@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from breakroom import norms
+from breakroom import jsonio, norms
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 
@@ -123,7 +123,7 @@ def tick_world(world: Path) -> None:
 
     state["day"] = day
     state["morale"] += incident["morale_delta"]
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    jsonio.write_pretty_json(state_path, state)
     write_chronicle(world, day=day, brief=brief, prose=prose)
 
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from breakroom import jsonio
 
 # `qualities` and `declared_values` MUST stay above the [stats] table header. TOML binds
 # every key after a table header into that table, so listing them below [stats] parsed
@@ -61,9 +62,7 @@ def init_world(world: Path, seed: int) -> None:
         ],
         "characters": ["jordan-vale"],
     }
-    (world / "state" / "tower.json").write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    jsonio.write_pretty_json(world / "state" / "tower.json", state)
     (world / "characters" / "jordan-vale.toml").write_text(
         STARTER_CHARACTER, encoding="utf-8"
     )
