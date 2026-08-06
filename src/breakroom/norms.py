@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,15 @@ REQUIRED_NORM_FIELDS = (
     "tags",
     "related_values",
 )
+KNOWN_NORM_FIELDS = {
+    "id",
+    "scope",
+    "description",
+    "severity",
+    "detection",
+    "tags",
+    "related_values",
+}
 VALID_SCOPES = {"tower_policy", "social_norm", "character_duty"}
 VALID_SEVERITIES = {"minor", "moderate", "major", "severe"}
 STATUS_RELEVANT_AUDIENCE = {"manager", "client", "all-hands"}
@@ -31,9 +40,6 @@ class Norm:
     detection: str
     tags: list[str]
     related_values: list[str]
-    applies_to_roles: list[str] = field(default_factory=list)
-    applies_to_rooms: list[str] = field(default_factory=list)
-    cooldown_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +85,11 @@ def _validate_norm(relative: Path, entry: Any) -> Norm:
         raise ValidationError(
             f"{relative}: invalid detection {entry['detection']!r} for {entry['id']}"
         )
+    unknown = set(entry) - KNOWN_NORM_FIELDS
+    if unknown:
+        raise ValidationError(
+            f"{relative}: unknown norm fields {sorted(unknown)} for {entry['id']}"
+        )
     return Norm(
         id=entry["id"],
         scope=entry["scope"],
@@ -87,9 +98,6 @@ def _validate_norm(relative: Path, entry: Any) -> Norm:
         detection=entry["detection"],
         tags=list(entry["tags"]),
         related_values=list(entry["related_values"]),
-        applies_to_roles=list(entry.get("applies_to_roles", [])),
-        applies_to_rooms=list(entry.get("applies_to_rooms", [])),
-        cooldown_days=entry.get("cooldown_days"),
     )
 
 

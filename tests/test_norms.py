@@ -282,6 +282,52 @@ def test_load_registry_rejects_unknown_detection_id(tmp_path: Path) -> None:
         load_registry(world)
 
 
+def test_load_registry_rejects_removed_scoping_field(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_registry(
+        world,
+        "\n".join(
+            [
+                '[[norms]]',
+                'id = "expense-honesty"',
+                'scope = "tower_policy"',
+                'description = "desc"',
+                'severity = "major"',
+                'detection = "expense_claim_overstated"',
+                'tags = ["honesty"]',
+                'related_values = ["honesty"]',
+                'applies_to_roles = ["manager"]',
+            ]
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="unknown norm fields"):
+        load_registry(world)
+
+
+def test_load_registry_rejects_unrelated_unknown_field(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_registry(
+        world,
+        "\n".join(
+            [
+                '[[norms]]',
+                'id = "expense-honesty"',
+                'scope = "tower_policy"',
+                'description = "desc"',
+                'severity = "major"',
+                'detection = "expense_claim_overstated"',
+                'tags = ["honesty"]',
+                'related_values = ["honesty"]',
+                'notes = "unexpected"',
+            ]
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="unknown norm fields"):
+        load_registry(world)
+
+
 def test_expense_fraud_detected(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_registry(world)
