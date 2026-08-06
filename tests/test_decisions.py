@@ -1,0 +1,659 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from breakroom import decisions
+from breakroom.norms import Norm, Registry
+from breakroom.worldstate import apply_event
+
+# ---------------------------------------------------------------------------
+# Fixtures shared across tests
+# ---------------------------------------------------------------------------
+
+CHARACTER_ID = "jordan-vale"
+
+CHARACTER = {
+    "id": CHARACTER_ID,
+    "name": "Jordan Vale",
+    "model": "claude-3-5-haiku",
+    "qualities": {"state:new-hire": True, "trait:people-pleaser": True},
+    "declared_values": ["keep the peace", "do competent work"],
+    "stats": {"focus": 2, "empathy": 3, "nerve": 2},
+}
+
+
+def make_state(**overrides: Any) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "seed": 42,
+        "day": 7,
+        "budget": 1000,
+        "morale": 46,
+        "reputation": 50,
+        "rooms": [{"id": "break-room", "name": "Break Room", "kind": "social", "floor": 1}],
+        "characters": [CHARACTER_ID],
+    }
+    state.update(overrides)
+    return state
+
+
+def make_incident_record(
+    *,
+    incident_id: str = "coffee-spill",
+    room: str = "break-room",
+    character_id: str = CHARACTER_ID,
+    cleanup_owner: str | None = CHARACTER_ID,
+    resolved: bool = False,
+) -> dict[str, Any]:
+    return {
+        "type": "incident",
+        "day": 7,
+        "character_id": character_id,
+        "incident": {
+            "id": incident_id,
+            "room": room,
+            "cleanup_owner": cleanup_owner,
+            "resolved": resolved,
+        },
+    }
+
+
+def make_registry(*norms: Norm) -> Registry:
+    return Registry(norms={norm.id: norm for norm in norms})
+
+
+CLEANUP_NORM = Norm(
+    id="clean-up-after-yourself",
+    scope="social_norm",
+    description="Whoever leaves a mess in a shared space is the one who clears it.",
+    severity="minor",
+    detection="incident_cleanup_owner_missed",
+    tags=["care", "shared-space"],
+    # `related_values` deliberately does NOT overlap CHARACTER's declared_values
+    # (["keep the peace", "do competent work"]) — this norm must reach candidate_norm_ids
+    # only via the fired-detector clause, so the fires-test is isolated from the
+    # related-values-overlap clause instead of being satisfied by both at once.
+    related_values=["never lie to clients"],
+)
+
+VALUE_OVERLAP_NORM = Norm(
+    id="keep-composure",
+    scope="social_norm",
+    description="Handle setbacks without escalating conflict.",
+    severity="minor",
+    detection="assigned_shift_unattended",  # never fires on an incident record
+    tags=["composure"],
+    related_values=["keep the peace"],
+)
+
+NON_MATCHING_NORM = Norm(
+    id="quarterly-report-honesty",
+    scope="tower_policy",
+    description="Report figures must match receipts.",
+    severity="moderate",
+    detection="expense_claim_overstated",
+    tags=["honesty"],
+    related_values=["never lie to clients"],
+)
+
+
+def valid_model_client(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"choice_id": "clean_up", "rationale": "It is my mess; I will handle it."}
+
+
+class RecordingModelClient:
+    """Captures every payload it is called with, in call order."""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(payload)
+        return self.responses[len(self.calls) - 1]
+
+
+# ---------------------------------------------------------------------------
+# Context assembly — required-context list
+# ---------------------------------------------------------------------------
+
+
+def test_context_contains_the_full_required_context_list() -> None:
+    state = make_state()
+    incident_record = make_incident_record()
+    registry = make_registry(CLEANUP_NORM)
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=incident_record,
+        registry=registry,
+    )
+
+    assert context["incident_id"] == "coffee-spill"
+    assert context["room_id"] == "break-room"
+    assert context["affected_characters"] == [CHARACTER_ID]
+    assert context["morale"] == state["morale"]
+    assert context["reputation"] == state["reputation"]
+    assert context["stats"] == CHARACTER["stats"]
+    assert context["declared_values"] == CHARACTER["declared_values"]
+    assert "candidate_norm_ids" in context
+    assert "relationship_edges" in context
+
+
+def test_relevant_norms_include_a_norm_whose_detector_fires() -> None:
+    state = make_state()
+    incident_record = make_incident_record()
+    registry = make_registry(CLEANUP_NORM)
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=incident_record,
+        registry=registry,
+    )
+
+    assert "clean-up-after-yourself" in context["candidate_norm_ids"]
+
+
+def test_relevant_norms_include_a_related_values_overlap_norm() -> None:
+    state = make_state()
+    incident_record = make_incident_record()
+    registry = make_registry(VALUE_OVERLAP_NORM)
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=incident_record,
+        registry=registry,
+    )
+
+    assert "keep-composure" in context["candidate_norm_ids"]
+
+
+def test_relevant_norms_exclude_a_non_matching_norm() -> None:
+    state = make_state()
+    incident_record = make_incident_record()
+    registry = make_registry(CLEANUP_NORM, NON_MATCHING_NORM)
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=incident_record,
+        registry=registry,
+    )
+
+    assert "quarterly-report-honesty" not in context["candidate_norm_ids"]
+
+
+def test_relationship_edges_include_an_edge_seeded_via_edge_delta() -> None:
+    state = make_state()
+    state = apply_event(
+        state,
+        {
+            "type": "edge_delta",
+            "day": 7,
+            "event_id": "evt-1",
+            "from": CHARACTER_ID,
+            "to": "sam-oduya",
+            "edges": {"trust": {"delta": 2}},
+        },
+    )
+    incident_record = make_incident_record()
+    registry = make_registry(CLEANUP_NORM)
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=incident_record,
+        registry=registry,
+    )
+
+    edges = context["relationship_edges"]
+    assert any(
+        edge["from"] == CHARACTER_ID and edge["to"] == "sam-oduya" and "trust" in edge["qualities"]
+        for edge in edges
+    )
+
+
+# ---------------------------------------------------------------------------
+# Option inventory
+# ---------------------------------------------------------------------------
+
+
+def test_decision_options_cover_all_three_tick_incident_ids() -> None:
+    assert set(decisions.DECISION_OPTIONS) == {"coffee-spill", "printer-jam", "awkward-silence"}
+    for incident_id, options in decisions.DECISION_OPTIONS.items():
+        assert len(options) >= 2, incident_id
+        ids = [option["id"] for option in options]
+        assert len(ids) == len(set(ids)), incident_id
+
+
+def test_coffee_spill_options_match_the_design_doc_worked_example() -> None:
+    options = decisions.DECISION_OPTIONS["coffee-spill"]
+    by_id = {option["id"]: option for option in options}
+
+    assert by_id["clean_up"]["action"] == "resolve_incident"
+    assert by_id["clean_up"]["payload"] == {"incident_id": "coffee-spill", "method": "clean"}
+    assert by_id["clean_up"]["candidate_norm_ids"] == ["shared-space-care"]
+    assert by_id["clean_up"]["risk"] == "low"
+
+    assert by_id["ignore"]["action"] == "skip_cleanup"
+    assert by_id["ignore"]["payload"] == {"incident_id": "coffee-spill"}
+    assert by_id["ignore"]["candidate_norm_ids"] == ["shared-space-care"]
+    assert by_id["ignore"]["risk"] == "moderate"
+
+
+# ---------------------------------------------------------------------------
+# Model routing + validation/retry/fallback FSM
+# ---------------------------------------------------------------------------
+
+
+def test_decision_call_routes_to_the_characters_assigned_model() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["character"]["model"] == CHARACTER["model"]
+    assert client.calls[0]["character"]["id"] == CHARACTER_ID
+
+
+def test_valid_first_response_needs_no_retry() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 1
+    assert result.attribution["validation_status"] == "valid"
+    assert result.attribution["choice_id"] == "clean_up"
+    assert result.attribution["rationale"] == "It is my mess."
+
+
+def test_malformed_first_response_triggers_exactly_one_retry_then_succeeds() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "not-a-real-option", "rationale": "??"},
+            {"choice_id": "ignore", "rationale": "I would rather not deal with it."},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    # The retry must carry the validation error alongside the same state-derived context.
+    assert "validation_error" in client.calls[1]
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == "ignore"
+
+
+def test_two_malformed_responses_fall_back_to_marked_fallback_option() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(incident_id="printer-jam", room="open-office"),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert result.attribution["validation_status"] == "fallback"
+    assert "fallback_reason" in result.attribution
+    fallback_options = decisions.DECISION_OPTIONS["printer-jam"]
+    marked = next(o for o in fallback_options if o.get("fallback") is True)
+    assert result.attribution["choice_id"] == marked["id"]
+
+
+def test_two_malformed_responses_fall_back_to_lowest_risk_when_none_marked() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),  # coffee-spill: no option is fallback-marked
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    coffee_options = decisions.DECISION_OPTIONS["coffee-spill"]
+    assert all(not option.get("fallback") for option in coffee_options)
+    assert result.attribution["validation_status"] == "fallback"
+    # "clean_up" is risk=low, "ignore" is risk=moderate -> low wins.
+    assert result.attribution["choice_id"] == "clean_up"
+
+
+def test_empty_rationale_is_invalid_and_triggers_retry() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "clean_up", "rationale": ""},
+            {"choice_id": "clean_up", "rationale": "Handling it now."},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert result.attribution["validation_status"] == "retry_valid"
+
+
+def test_overlong_rationale_is_invalid() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "clean_up", "rationale": "x" * 500},
+            {"choice_id": "clean_up", "rationale": "Short reason."},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert result.attribution["validation_status"] == "retry_valid"
+
+
+# ---------------------------------------------------------------------------
+# Attribution record — full field set
+# ---------------------------------------------------------------------------
+
+
+def test_attribution_record_carries_the_full_field_set_on_a_valid_choice() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=5,
+    )
+    attribution = result.attribution
+
+    assert attribution["decision_id"] == "dec-000006"
+    assert attribution["decision_type"] == "incident_response"
+    assert attribution["tick"] == state["day"]
+    assert attribution["character_id"] == CHARACTER_ID
+    assert attribution["model_id"] == CHARACTER["model"]
+    assert attribution["context_ref"]["context_hash"].startswith("sha256:")
+    assert isinstance(attribution["options"], list) and attribution["options"]
+    for option_entry in attribution["options"]:
+        assert set(option_entry) == {"id", "payload_sha256"}
+    assert attribution["choice_id"] == "clean_up"
+    assert attribution["choice_payload"] == {"incident_id": "coffee-spill", "method": "clean"}
+    assert attribution["rationale"] == "It is my mess."
+    assert "raw_response_ref" not in attribution
+    assert attribution["validation_status"] == "valid"
+    assert "fallback_reason" not in attribution
+    assert attribution["candidate_norm_ids"] == ["clean-up-after-yourself"]
+    assert attribution["intervention_context"] == []
+
+    # Exactly the fields the design doc specifies (raw_response_ref/fallback_reason
+    # are conditional and correctly absent here).
+    expected_fields = {
+        "decision_id",
+        "decision_type",
+        "tick",
+        "character_id",
+        "model_id",
+        "context_ref",
+        "options",
+        "choice_id",
+        "choice_payload",
+        "rationale",
+        "validation_status",
+        "candidate_norm_ids",
+        "intervention_context",
+    }
+    assert set(attribution) == expected_fields
+
+
+def test_attribution_record_includes_fallback_reason_only_on_fallback() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert isinstance(result.attribution["fallback_reason"], str)
+    assert result.attribution["fallback_reason"]
+
+
+def test_candidate_norm_ids_on_attribution_equals_contexts_relevant_norm_ids() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM, VALUE_OVERLAP_NORM, NON_MATCHING_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    context = decisions.assemble_incident_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+    )
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["candidate_norm_ids"] == context["candidate_norm_ids"]
+    assert "clean-up-after-yourself" in result.attribution["candidate_norm_ids"]
+    assert "keep-composure" in result.attribution["candidate_norm_ids"]
+    assert "quarterly-report-honesty" not in result.attribution["candidate_norm_ids"]
+
+
+def test_decision_type_is_fixed_to_incident_response() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["decision_type"] == "incident_response"
+
+
+def test_decision_id_is_zero_padded_from_existing_decision_count() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=41,
+    )
+
+    assert result.attribution["decision_id"] == "dec-000042"
+
+
+# ---------------------------------------------------------------------------
+# attempted_action — resolution handoff shape
+# ---------------------------------------------------------------------------
+
+
+def test_attempted_action_matches_the_resolution_handoff_shape() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "ignore", "rationale": "Not my problem."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=41,
+    )
+
+    assert result.attempted_action == {
+        "type": "attempted_action",
+        "decision_id": "dec-000042",
+        "character_id": CHARACTER_ID,
+        "action": "skip_cleanup",
+        "payload": {"incident_id": "coffee-spill"},
+        "candidate_norm_ids": ["shared-space-care"],
+    }
+
+
+def test_attempted_action_is_emitted_on_fallback_too() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attempted_action["type"] == "attempted_action"
+    assert result.attempted_action["action"] == "resolve_incident"
+    assert result.attempted_action["character_id"] == CHARACTER_ID
+
+
+# ---------------------------------------------------------------------------
+# No resolution/state mutation — this module only ever returns objects
+# ---------------------------------------------------------------------------
+
+
+def test_decide_incident_response_does_not_mutate_state_or_characters() -> None:
+    state = make_state()
+    original_state = dict(state)
+    character_copy = dict(CHARACTER)
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+
+    decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: character_copy},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert state == original_state
+    assert character_copy == CHARACTER
+
+
+@pytest.mark.parametrize(
+    "incident_id,room",
+    [("printer-jam", "open-office"), ("awkward-silence", "break-room")],
+)
+def test_decide_incident_response_works_for_every_seeded_incident_id(
+    incident_id: str, room: str
+) -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    first_option_id = decisions.DECISION_OPTIONS[incident_id][0]["id"]
+    client = RecordingModelClient([{"choice_id": first_option_id, "rationale": "Handling it."}])
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(incident_id=incident_id, room=room),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["validation_status"] == "valid"
+    assert result.attribution["choice_id"] == first_option_id
