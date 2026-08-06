@@ -8,6 +8,7 @@ from breakroom.worldstate import (
     ValidationError,
     apply_event,
     character_edges,
+    character_qualities,
     diff_states,
     edge_provenance,
     edge_qualities,
@@ -561,3 +562,163 @@ def test_ticks_since_spotlight_returns_days_since_last_spotlight() -> None:
     next_state = apply_event(state, scene)
 
     assert ticks_since_spotlight(next_state, "jordan-vale", current_day=10) == 7
+
+
+def _character_toml(qualities_line: str) -> str:
+    return (
+        'id = "jordan-vale"\n'
+        'name = "Jordan Vale"\n'
+        'model = "claude-3-5-haiku"\n'
+        f"{qualities_line}\n"
+        "\n"
+        "[stats]\n"
+        "focus = 2\n"
+        "empathy = 3\n"
+        "nerve = 2\n"
+    )
+
+
+def _write_character_qualities(world: Path, qualities_line: str) -> None:
+    (world / "characters" / "jordan-vale.toml").write_text(
+        _character_toml(qualities_line), encoding="utf-8"
+    )
+
+
+def test_character_quality_bad_namespace_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "foo:x" = true }')
+
+    with pytest.raises(ValidationError, match="foo:x"):
+        load_world(world)
+
+
+def test_character_quality_unnamespaced_key_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "new-hire" = true }')
+
+    with pytest.raises(ValidationError, match="new-hire"):
+        load_world(world)
+
+
+def test_character_quality_stat_namespace_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "stat:focus" = true }')
+
+    with pytest.raises(ValidationError, match="stat:focus"):
+        load_world(world)
+
+
+def test_character_quality_rel_namespace_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "rel:rivalry" = true }')
+
+    with pytest.raises(ValidationError, match="rel:rivalry"):
+        load_world(world)
+
+
+def test_character_quality_room_namespace_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "room:break-room" = true }')
+
+    with pytest.raises(ValidationError, match="room:break-room"):
+        load_world(world)
+
+
+def test_character_quality_scalar_above_range_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:x" = 4 }')
+
+    with pytest.raises(ValidationError, match="trait:x"):
+        load_world(world)
+
+
+def test_character_quality_scalar_below_range_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:x" = -4 }')
+
+    with pytest.raises(ValidationError, match="trait:x"):
+        load_world(world)
+
+
+def test_character_quality_false_value_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:x" = false }')
+
+    with pytest.raises(ValidationError, match="trait:x"):
+        load_world(world)
+
+
+def test_character_quality_string_value_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:x" = "high" }')
+
+    with pytest.raises(ValidationError, match="trait:x"):
+        load_world(world)
+
+
+def test_character_quality_float_value_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:x" = 2.5 }')
+
+    with pytest.raises(ValidationError, match="trait:x"):
+        load_world(world)
+
+
+def test_character_quality_true_and_one_are_distinct_legal_values(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(
+        world, 'qualities = { "trait:boolean-quality" = true, "trait:scalar-quality" = 1 }'
+    )
+
+    loaded = load_world(world)
+
+    qualities = character_qualities(loaded.characters, "jordan-vale")
+    assert qualities["trait:boolean-quality"] is True
+    assert type(qualities["trait:scalar-quality"]) is int
+    assert qualities["trait:scalar-quality"] == 1
+    assert qualities["trait:scalar-quality"] is not True
+
+
+def test_character_qualities_absent_field_defaults_to_empty_dict() -> None:
+    characters = {"jordan-vale": {"id": "jordan-vale"}}
+
+    assert character_qualities(characters, "jordan-vale") == {}
+
+
+def test_character_qualities_missing_character_defaults_to_empty_dict() -> None:
+    characters: dict[str, dict[str, object]] = {}
+
+    assert character_qualities(characters, "jordan-vale") == {}
+
+
+def test_character_qualities_returned_dict_does_not_alias_stored_state() -> None:
+    characters = {"jordan-vale": {"qualities": {"trait:people-pleaser": True}}}
+
+    result = character_qualities(characters, "jordan-vale")
+    result["trait:new-hire"] = True
+    del result["trait:people-pleaser"]
+
+    assert characters["jordan-vale"]["qualities"] == {"trait:people-pleaser": True}
+
+
+def test_init_world_starter_character_qualities_round_trip(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+
+    loaded = load_world(world)
+
+    assert character_qualities(loaded.characters, "jordan-vale") == {
+        "state:new-hire": True,
+        "trait:people-pleaser": True,
+    }

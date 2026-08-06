@@ -13,7 +13,7 @@ STARTER_CHARACTER = """\
 id = "jordan-vale"
 name = "Jordan Vale"
 model = "claude-3-5-haiku"
-qualities = ["new-hire", "people-pleaser"]
+qualities = { "state:new-hire" = true, "trait:people-pleaser" = true }
 declared_values = ["keep the peace", "do competent work"]
 
 [stats]
