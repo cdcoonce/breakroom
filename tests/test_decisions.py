@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from breakroom import decisions
+from breakroom import decisions, secrets
 from breakroom.norms import Norm, Registry
 from breakroom.worldstate import ValidationError, apply_event
 
@@ -1227,6 +1229,647 @@ def test_decide_norm_pressure_works_for_every_seeded_action_kind(
         model_client=client,
         existing_decision_count=0,
     )
-
     assert result.attribution["validation_status"] == "valid"
     assert result.attribution["choice_id"] == first_option_id
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — fixtures
+# ---------------------------------------------------------------------------
+
+# A distinctive marker used for the sealed-content boundary test: it must never
+# show up anywhere except inside the sealed secret's own `content` field.
+SEALED_CONTENT_MARKER = "ZZ-SEALED-PAYLOAD-9f21c7-DO-NOT-LEAK"
+
+SECRET_ID = "affair-1"
+
+CLIENT_CONFIDENTIALITY_NORM = Norm(
+    id="client-confidentiality",
+    scope="tower_policy",
+    description="Employees must not share client-confidential information with unauthorized "
+    "parties.",
+    severity="major",
+    detection="secret_shared_with_unauthorized_audience",
+    tags=["confidentiality", "client", "trust"],
+    # Deliberately does NOT overlap CHARACTER's declared_values, so this norm reaches
+    # candidate_norm_ids only via the fired-detector clause in the relevant tests.
+    related_values=["discretion", "professionalism", "loyalty"],
+)
+
+
+@pytest.fixture
+def world(tmp_path: Path) -> Path:
+    world_path = tmp_path / "tower"
+    world_path.mkdir()
+    return world_path
+
+
+def seal_test_secret(world: Path, **overrides: Any) -> None:
+    kwargs: dict[str, Any] = {
+        "id": SECRET_ID,
+        "holder": CHARACTER_ID,
+        "content": SEALED_CONTENT_MARKER,
+        "is_true": True,
+        "knowers": [CHARACTER_ID],
+    }
+    kwargs.update(overrides)
+    secrets.seal_secret(world, **kwargs)
+
+
+def make_disclosure_opportunity(
+    *,
+    character_id: str = CHARACTER_ID,
+    secret_id: str = SECRET_ID,
+    actual_audience: list[str] | None = None,
+    authorized_audience: list[str] | None = None,
+    secret_classification: str | None = "client_confidential",
+) -> dict[str, Any]:
+    opportunity: dict[str, Any] = {
+        "type": "decision",
+        "action": "share_secret",
+        "character_id": character_id,
+        "secret_id": secret_id,
+        "actual_audience": (
+            list(actual_audience) if actual_audience is not None else ["open-office"]
+        ),
+        "authorized_audience": (
+            list(authorized_audience) if authorized_audience is not None else [CHARACTER_ID]
+        ),
+    }
+    if secret_classification is not None:
+        opportunity["secret_classification"] = secret_classification
+    return opportunity
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — context assembly
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_context_contains_the_full_required_context_list(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    opportunity = make_disclosure_opportunity()
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+        observable_facts=["the office noticed Jordan leaving early"],
+    )
+
+    assert context["observable_facts"] == ["the office noticed Jordan leaving early"]
+    assert context["secret"]["id"] == SECRET_ID
+    assert context["secret"]["knowers"] == [CHARACTER_ID]
+    assert "content" not in context["secret"]
+    assert context["actual_audience"] == ["open-office"]
+    assert context["authorized_audience"] == [CHARACTER_ID]
+    assert "candidate_norm_ids" in context
+    assert "relationship_edges" in context
+
+
+def test_social_disclosure_observable_facts_defaults_to_empty_list(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+    )
+
+    assert context["observable_facts"] == []
+
+
+def test_social_disclosure_relationship_edges_include_an_edge_seeded_via_edge_delta(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    state = apply_event(
+        state,
+        {
+            "type": "edge_delta",
+            "day": 7,
+            "event_id": "evt-1",
+            "from": CHARACTER_ID,
+            "to": "sam-oduya",
+            "edges": {"trust": {"delta": 2}},
+        },
+    )
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+    )
+
+    edges = context["relationship_edges"]
+    assert any(
+        edge["from"] == CHARACTER_ID and edge["to"] == "sam-oduya" and "trust" in edge["qualities"]
+        for edge in edges
+    )
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — knowers gate
+# ---------------------------------------------------------------------------
+
+
+def test_character_not_in_secrets_knowers_raises_secrets_validation_error(world: Path) -> None:
+    seal_test_secret(world, holder="sam-oduya", knowers=["sam-oduya"])
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([])
+
+    with pytest.raises(secrets.ValidationError):
+        decisions.decide_social_disclosure(
+            world=world,
+            state=state,
+            characters={CHARACTER_ID: CHARACTER},
+            disclosure_opportunity=make_disclosure_opportunity(),
+            registry=registry,
+            model_client=client,
+            existing_decision_count=0,
+        )
+
+    assert client.calls == []
+
+
+def test_character_not_in_knowers_raises_via_context_assembly_too(world: Path) -> None:
+    seal_test_secret(world, holder="sam-oduya", knowers=["sam-oduya"])
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+
+    with pytest.raises(secrets.ValidationError):
+        decisions.assemble_social_disclosure_context(
+            world=world,
+            state=state,
+            characters={CHARACTER_ID: CHARACTER},
+            disclosure_opportunity=make_disclosure_opportunity(),
+            registry=registry,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — sealed-content boundary (the critical invariant)
+# ---------------------------------------------------------------------------
+
+
+def test_sealed_secret_content_never_leaks_into_context_payload_attribution_or_action(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    opportunity = make_disclosure_opportunity()
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 1
+    assert SEALED_CONTENT_MARKER not in json.dumps(context)
+    assert SEALED_CONTENT_MARKER not in json.dumps(client.calls[0])
+    assert SEALED_CONTENT_MARKER not in json.dumps(result.attribution)
+    assert SEALED_CONTENT_MARKER not in json.dumps(result.attempted_action)
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — norm relevance (audience-driven, guarded by classification)
+# ---------------------------------------------------------------------------
+
+
+def test_norm_relevance_fires_on_unauthorized_client_confidential_audience(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    opportunity = make_disclosure_opportunity(
+        actual_audience=["open-office"],
+        authorized_audience=[CHARACTER_ID],
+        secret_classification="client_confidential",
+    )
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+
+    assert "client-confidentiality" in context["candidate_norm_ids"]
+
+
+def test_norm_relevance_absent_when_authorized_audience_covers_actual(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    opportunity = make_disclosure_opportunity(
+        actual_audience=["open-office"],
+        authorized_audience=["open-office", CHARACTER_ID],
+        secret_classification="client_confidential",
+    )
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+
+    assert "client-confidentiality" not in context["candidate_norm_ids"]
+
+
+def test_norm_relevance_absent_when_classification_is_missing(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    # Unauthorized audience, but no secret_classification field at all.
+    opportunity = make_disclosure_opportunity(
+        actual_audience=["open-office"],
+        authorized_audience=[CHARACTER_ID],
+        secret_classification=None,
+    )
+    assert "secret_classification" not in opportunity
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+
+    assert "client-confidentiality" not in context["candidate_norm_ids"]
+
+
+def test_norm_relevance_absent_when_classification_is_not_client_confidential(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    # Unauthorized audience, but classification is some other (non-canonical) value.
+    opportunity = make_disclosure_opportunity(
+        actual_audience=["open-office"],
+        authorized_audience=[CHARACTER_ID],
+        secret_classification="internal_only",
+    )
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+
+    assert "client-confidentiality" not in context["candidate_norm_ids"]
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — option inventory
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_options_are_withhold_share_partial_share_full() -> None:
+    ids = [option["id"] for option in decisions.SOCIAL_DISCLOSURE_OPTIONS]
+    assert ids == ["withhold", "share_partial", "share_full"]
+
+
+def test_social_disclosure_options_carry_empty_candidate_norm_ids_by_design() -> None:
+    for option in decisions.SOCIAL_DISCLOSURE_OPTIONS:
+        assert option["candidate_norm_ids"] == [], option["id"]
+
+
+def test_social_disclosure_withhold_is_the_fallback_option() -> None:
+    fallback = next(o for o in decisions.SOCIAL_DISCLOSURE_OPTIONS if o.get("fallback") is True)
+    assert fallback["id"] == "withhold"
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — model routing + validation/retry/fallback FSM
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_decision_call_routes_to_the_characters_assigned_model(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["character"]["model"] == CHARACTER["model"]
+    assert client.calls[0]["character"]["id"] == CHARACTER_ID
+
+
+def test_social_disclosure_malformed_first_response_triggers_one_retry_then_succeeds(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "not-a-real-option", "rationale": "??"},
+            {"choice_id": "share_partial", "rationale": "A little, carefully."},
+        ]
+    )
+
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert "validation_error" in client.calls[1]
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == "share_partial"
+
+
+def test_social_disclosure_two_malformed_responses_fall_back_to_withhold(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert result.attribution["validation_status"] == "fallback"
+    assert "fallback_reason" in result.attribution
+    assert result.attribution["choice_id"] == "withhold"
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — payloads carry secret_id filled at call time
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_option_payloads_carry_secret_id_from_the_opportunity(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    sent_options = client.calls[0]["options"]
+    assert len(sent_options) == 3
+    for option in sent_options:
+        assert option["payload"]["secret_id"] == SECRET_ID
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — attribution record
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_attribution_record_carries_the_full_field_set(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=5,
+    )
+    attribution = result.attribution
+
+    assert attribution["decision_id"] == "dec-000006"
+    assert attribution["decision_type"] == "social_disclosure"
+    assert attribution["tick"] == state["day"]
+    assert attribution["character_id"] == CHARACTER_ID
+    assert attribution["model_id"] == CHARACTER["model"]
+    assert attribution["context_ref"]["context_hash"].startswith("sha256:")
+    assert isinstance(attribution["options"], list) and attribution["options"]
+    for option_entry in attribution["options"]:
+        assert set(option_entry) == {"id", "payload_sha256"}
+    assert attribution["choice_id"] == "withhold"
+    assert attribution["validation_status"] == "valid"
+    assert "fallback_reason" not in attribution
+
+    expected_fields = {
+        "decision_id",
+        "decision_type",
+        "tick",
+        "character_id",
+        "model_id",
+        "context_ref",
+        "options",
+        "choice_id",
+        "choice_payload",
+        "rationale",
+        "validation_status",
+        "candidate_norm_ids",
+        "intervention_context",
+    }
+    assert set(attribution) == expected_fields
+
+
+def test_social_disclosure_attribution_candidate_norm_ids_equals_context_set(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    opportunity = make_disclosure_opportunity(
+        actual_audience=["open-office"],
+        authorized_audience=[CHARACTER_ID],
+        secret_classification="client_confidential",
+    )
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    context = decisions.assemble_social_disclosure_context(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+    )
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=opportunity,
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["candidate_norm_ids"] == context["candidate_norm_ids"]
+    assert "client-confidentiality" in result.attribution["candidate_norm_ids"]
+
+
+def test_social_disclosure_decision_type_is_fixed(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["decision_type"] == "social_disclosure"
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — attempted_action (resolution handoff shape)
+# ---------------------------------------------------------------------------
+
+
+def test_social_disclosure_attempted_action_matches_the_resolution_handoff_shape(
+    world: Path,
+) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "share_full", "rationale": "Full disclosure."}])
+
+    result = decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=41,
+    )
+
+    chosen = next(o for o in decisions.SOCIAL_DISCLOSURE_OPTIONS if o["id"] == "share_full")
+    assert result.attempted_action == {
+        "type": "attempted_action",
+        "decision_id": "dec-000042",
+        "character_id": CHARACTER_ID,
+        "action": chosen["action"],
+        "payload": {**chosen["payload"], "secret_id": SECRET_ID},
+        "candidate_norm_ids": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Social Disclosure — no resolution/state/secret-store mutation
+# ---------------------------------------------------------------------------
+
+
+def test_decide_social_disclosure_does_not_mutate_state_or_characters(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    original_state = dict(state)
+    character_copy = dict(CHARACTER)
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+    client = RecordingModelClient([{"choice_id": "withhold", "rationale": "Too risky."}])
+
+    decisions.decide_social_disclosure(
+        world=world,
+        state=state,
+        characters={CHARACTER_ID: character_copy},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert state == original_state
+    assert character_copy == CHARACTER
+
+
+def test_decide_social_disclosure_works_for_every_seeded_option(world: Path) -> None:
+    seal_test_secret(world)
+    state = make_state()
+    registry = make_registry(CLIENT_CONFIDENTIALITY_NORM)
+
+    for option in decisions.SOCIAL_DISCLOSURE_OPTIONS:
+        client = RecordingModelClient([{"choice_id": option["id"], "rationale": "Handling it."}])
+        result = decisions.decide_social_disclosure(
+            world=world,
+            state=state,
+            characters={CHARACTER_ID: CHARACTER},
+            disclosure_opportunity=make_disclosure_opportunity(),
+            registry=registry,
+            model_client=client,
+            existing_decision_count=0,
+        )
+        assert result.attribution["validation_status"] == "valid"
+        assert result.attribution["choice_id"] == option["id"]
