@@ -39,11 +39,8 @@ Required fields:
 - `tags`: short grouping tags for reports and storylet salience.
 - `related_values`: declared-value strings that make this norm relevant to integrity drift.
 
-Optional fields:
-
-- `applies_to_roles`: role ids for role-bound duties, empty or omitted means everyone.
-- `applies_to_rooms`: room ids or room kinds for room-bound norms.
-- `cooldown_days`: reporting hint for repeated low-level violations.
+Per-room/per-role scoping and cooldown throttling are deliberately deferred until a consumer
+exists (see #62).
 
 ## Scope Semantics
 
