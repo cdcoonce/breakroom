@@ -722,3 +722,21 @@ def test_init_world_starter_character_qualities_round_trip(tmp_path: Path) -> No
         "state:new-hire": True,
         "trait:people-pleaser": True,
     }
+
+
+def test_character_qualities_of_wrong_shape_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = ["new-hire", "people-pleaser"]')
+
+    with pytest.raises(ValidationError, match="qualities must be a table"):
+        load_world(world)
+
+
+def test_character_quality_empty_name_is_rejected(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_character_qualities(world, 'qualities = { "trait:" = true }')
+
+    with pytest.raises(ValidationError, match="trait:"):
+        load_world(world)
