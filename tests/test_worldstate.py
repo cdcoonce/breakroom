@@ -15,6 +15,7 @@ from breakroom.worldstate import (
     load_snapshot,
     load_world,
     replay_events,
+    ticks_since_spotlight,
     write_snapshot,
 )
 
@@ -429,3 +430,134 @@ def test_new_floor_contradicting_an_earlier_accumulated_cap_is_rejected() -> Non
 
     with pytest.raises(ValidationError, match="floor 0 exceeds cap -3"):
         apply_event(state, contradicting_floor)
+
+
+def test_scene_event_with_character_ids_records_spotlight_history_per_character() -> None:
+    state = {"day": 0}
+    scene = {
+        "type": "scene",
+        "day": 3,
+        "storylet_id": "coffee-spill-fallout",
+        "character_ids": ["jordan-vale", "sam-oduya"],
+    }
+
+    next_state = apply_event(state, scene)
+
+    assert next_state["spotlight_history"]["jordan-vale"] == 3
+    assert next_state["spotlight_history"]["sam-oduya"] == 3
+
+    later_scene = {
+        "type": "scene",
+        "day": 5,
+        "storylet_id": "solo-follow-up",
+        "character_ids": ["jordan-vale"],
+    }
+    advanced = apply_event(next_state, later_scene)
+
+    assert advanced["spotlight_history"]["jordan-vale"] == 5
+    assert advanced["spotlight_history"]["sam-oduya"] == 3
+
+
+def test_legacy_scene_event_leaves_spotlight_history_untouched(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    initial = load_world(world).state
+    incident = {
+        "sequence": 1,
+        "type": "incident",
+        "day": 1,
+        "incident": {"id": "coffee-spill", "morale_delta": -2},
+    }
+    scene = {
+        "sequence": 2,
+        "type": "scene",
+        "day": 1,
+        "character_id": "jordan-vale",
+        "incident_id": "coffee-spill",
+    }
+    (world / "events.jsonl").write_text(
+        json.dumps(incident, sort_keys=True) + "\n" + json.dumps(scene, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    current = apply_event(apply_event(initial, incident), scene)
+    (world / "state" / "tower.json").write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    replayed = replay_events(initial, world / "events.jsonl")
+
+    assert replayed == load_world(world).state
+    assert "spotlight_history" not in replayed
+    assert replayed["day"] == 1
+
+
+def test_scene_character_ids_present_but_empty_is_rejected() -> None:
+    state = {"day": 0}
+    event = {
+        "type": "scene",
+        "day": 1,
+        "storylet_id": "solo",
+        "character_ids": [],
+    }
+
+    with pytest.raises(ValidationError, match="character_ids"):
+        apply_event(state, event)
+
+
+def test_scene_character_ids_non_list_is_rejected() -> None:
+    state = {"day": 0}
+    event = {
+        "type": "scene",
+        "day": 1,
+        "storylet_id": "solo",
+        "character_ids": "jordan-vale",
+    }
+
+    with pytest.raises(ValidationError, match="character_ids"):
+        apply_event(state, event)
+
+
+def test_scene_character_ids_containing_non_strings_is_rejected() -> None:
+    state = {"day": 0}
+    event = {
+        "type": "scene",
+        "day": 1,
+        "storylet_id": "solo",
+        "character_ids": ["jordan-vale", 7],
+    }
+
+    with pytest.raises(ValidationError, match="character_ids"):
+        apply_event(state, event)
+
+
+def test_scene_character_ids_without_storylet_id_is_rejected() -> None:
+    state = {"day": 0}
+    event = {
+        "type": "scene",
+        "day": 1,
+        "character_ids": ["jordan-vale"],
+    }
+
+    with pytest.raises(ValidationError, match="storylet_id"):
+        apply_event(state, event)
+
+
+def test_ticks_since_spotlight_returns_none_for_never_spotlighted_character() -> None:
+    state = {"day": 0}
+
+    assert ticks_since_spotlight(state, "jordan-vale", current_day=10) is None
+
+
+def test_ticks_since_spotlight_returns_days_since_last_spotlight() -> None:
+    state = {"day": 0}
+    scene = {
+        "type": "scene",
+        "day": 3,
+        "storylet_id": "coffee-spill-fallout",
+        "character_ids": ["jordan-vale"],
+    }
+
+    next_state = apply_event(state, scene)
+
+    assert ticks_since_spotlight(next_state, "jordan-vale", current_day=10) == 7
