@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from breakroom import jsonio
+
 
 class ValidationError(ValueError):
     pass
@@ -182,7 +184,7 @@ def write_snapshot(world: Path, state: dict[str, Any], name: str) -> Path:
     snapshots = world / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     path = snapshots / f"{name}.json"
-    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    jsonio.write_pretty_json(path, state)
     return path
 
 
