@@ -12,6 +12,9 @@ class ValidationError(ValueError):
     pass
 
 
+_CHARACTER_QUALITY_NAMESPACES = {"trait", "state", "skill", "value", "role"}
+
+
 @dataclass(frozen=True)
 class World:
     root: Path
@@ -52,6 +55,11 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
 def edge_qualities(state: dict[str, Any], from_id: str, to_id: str) -> dict[str, Any]:
     pair = state.get("edges", {}).get(_pair_key(from_id, to_id), {})
     return copy.deepcopy(pair)
+
+
+def character_qualities(characters: dict[str, dict[str, Any]], character_id: str) -> dict[str, Any]:
+    qualities = characters.get(character_id, {}).get("qualities", {})
+    return copy.deepcopy(qualities)
 
 
 def character_edges(state: dict[str, Any], character_id: str) -> list[dict[str, Any]]:
@@ -223,4 +231,18 @@ def _load_character(world: Path, character_id: str) -> dict[str, Any]:
     for stat in ("focus", "empathy", "nerve"):
         if stat not in character["stats"]:
             raise ValidationError(f"{relative}: missing stats.{stat}")
+    _validate_character_qualities(relative, character.get("qualities", {}))
     return character
+
+
+def _validate_character_qualities(relative: Path, qualities: dict[str, Any]) -> None:
+    for key, value in qualities.items():
+        namespace, sep, _name = key.partition(":")
+        if not sep or namespace not in _CHARACTER_QUALITY_NAMESPACES:
+            raise ValidationError(f"{relative}: invalid quality namespace {key!r}")
+        if value is True:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValidationError(f"{relative}: invalid quality value for {key!r}")
+        if value < -3 or value > 3:
+            raise ValidationError(f"{relative}: quality {key!r} out of range")
