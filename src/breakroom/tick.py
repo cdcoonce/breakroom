@@ -6,9 +6,13 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from breakroom import norms
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 
+# `norm_tags` here is authored vocabulary for the incident type. It is NOT the engine's
+# output — the emitted event carries that separately as a top-level key. `needs_cleanup`
+# decides whether the incident leaves a physical mess someone owns clearing.
 INCIDENTS = [
     {
         "id": "coffee-spill",
@@ -16,6 +20,7 @@ INCIDENTS = [
         "room": "break-room",
         "morale_delta": -2,
         "norm_tags": ["care", "shared-space"],
+        "needs_cleanup": True,
     },
     {
         "id": "printer-jam",
@@ -23,6 +28,7 @@ INCIDENTS = [
         "room": "open-office",
         "morale_delta": -1,
         "norm_tags": ["duty", "patience"],
+        "needs_cleanup": True,
     },
     {
         "id": "awkward-silence",
@@ -30,6 +36,7 @@ INCIDENTS = [
         "room": "break-room",
         "morale_delta": -2,
         "norm_tags": ["belonging", "candor"],
+        "needs_cleanup": False,
     },
 ]
 
@@ -59,17 +66,33 @@ def tick_world(world: Path) -> None:
     incident = select_incident(seed=state["seed"], day=day)
     storylet = STORYLETS[incident["id"]]
 
-    append_event(
-        world,
-        {
-            "type": "incident",
-            "day": day,
-            "incident": incident,
-            "storylet": storylet,
-        },
-    )
-
+    # The cleanup owner is the acting character, so the cast has to be resolved before
+    # the incident event is emitted.
     character = load_character(world, state["characters"][0])
+
+    # A copy: INCIDENTS is module-level shared state and the raw entry stays raw, so the
+    # room lookup, the brief, and the chronicle keep reading it unwidened. `resolved` is
+    # a literal False — nothing in the system can clean anything up until the decisions
+    # engine (#13) lands.
+    emitted_incident = {
+        **incident,
+        "cleanup_owner": character["id"] if incident["needs_cleanup"] else None,
+        "resolved": False,
+    }
+    incident_event: dict[str, Any] = {
+        "type": "incident",
+        "day": day,
+        "incident": emitted_incident,
+        "storylet": storylet,
+    }
+    registry = _load_registry(world)
+    norm_violations: list[dict[str, Any]] = []
+    if registry is not None:
+        tags = norms.tag_record(registry, incident_event)
+        norm_violations = tags["norm_violations"]
+        incident_event.update(tags)
+    append_event(world, incident_event)
+
     room = next(room for room in state["rooms"] if room["id"] == incident["room"])
     brief = {
         "day": day,
@@ -84,22 +107,35 @@ def tick_world(world: Path) -> None:
         },
     }
     prose = render_scene(brief)
-    append_event(
-        world,
-        {
-            "type": "scene",
-            "day": day,
-            "character_id": character["id"],
-            "incident_id": incident["id"],
-            "brief": brief,
-            "prose": prose,
-        },
-    )
+    scene_event: dict[str, Any] = {
+        "type": "scene",
+        "day": day,
+        "character_id": character["id"],
+        "incident_id": incident["id"],
+        "brief": brief,
+        "prose": prose,
+    }
+    if registry is not None:
+        scene_event["integrity_drift"] = norms.integrity_drift(
+            character, registry, norm_violations
+        )
+    append_event(world, scene_event)
 
     state["day"] = day
     state["morale"] += incident["morale_delta"]
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_chronicle(world, day=day, brief=brief, prose=prose)
+
+
+def _load_registry(world: Path) -> norms.Registry | None:
+    """The registry is optional: a world initialized before norms existed still ticks.
+
+    Mirrors the graceful skip in `secrets._tag_with_norms`. Scaffolding the file is
+    `init_world`'s job, never the tick loop's.
+    """
+    if not (world / "data" / "norms.toml").exists():
+        return None
+    return norms.load_registry(world)
 
 
 def select_incident(seed: int, day: int) -> dict[str, Any]:
