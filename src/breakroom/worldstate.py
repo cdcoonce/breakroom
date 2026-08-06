@@ -23,8 +23,7 @@ def load_world(world: Path) -> World:
     state = _read_json(world / "state" / "tower.json")
     _validate_tower(state)
     characters = {
-        character_id: _load_character(world, character_id)
-        for character_id in state["characters"]
+        character_id: _load_character(world, character_id) for character_id in state["characters"]
     }
     return World(root=world, state=state, characters=characters)
 
@@ -102,21 +101,39 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
     edges = state.setdefault("edges", {})
     pair = edges.setdefault(pair_key, {})
     for quality, change in event["edges"].items():
-        entry = pair.setdefault(quality, {"value": 0, "floor": None, "history": []})
+        entry = pair.setdefault(quality, {"value": 0, "cap": None, "floor": None, "history": []})
         delta = change.get("delta", 0)
+        cap = change.get("cap")
         floor = change.get("floor")
+
+        effective_cap = entry["cap"]
+        if cap is not None:
+            effective_cap = cap if effective_cap is None else min(effective_cap, cap)
 
         effective_floor = entry["floor"]
         if floor is not None:
-            effective_floor = floor if effective_floor is None else min(effective_floor, floor)
+            effective_floor = floor if effective_floor is None else max(effective_floor, floor)
+
+        if (
+            effective_cap is not None
+            and effective_floor is not None
+            and effective_floor > effective_cap
+        ):
+            raise ValidationError(
+                f"edge_delta event: floor {effective_floor} exceeds cap {effective_cap} "
+                f"for {quality}"
+            )
 
         value = entry["value"] + delta
+        if effective_cap is not None:
+            value = min(value, effective_cap)
         if effective_floor is not None:
-            value = min(value, effective_floor)
+            value = max(value, effective_floor)
 
         entry["value"] = value
+        entry["cap"] = effective_cap
         entry["floor"] = effective_floor
-        entry["history"].append({"event_id": event_id, "delta": delta, "floor": floor})
+        entry["history"].append({"event_id": event_id, "delta": delta, "cap": cap, "floor": floor})
 
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:

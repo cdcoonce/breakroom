@@ -236,7 +236,7 @@ def test_edges_at_or_above_filters_by_quality_threshold() -> None:
     assert hits == [{"from": "priya-nair", "to": "sam-oduya", "value": 4}]
 
 
-def test_permanent_floor_scar_caps_recovery_under_later_positive_delta() -> None:
+def test_permanent_cap_scar_caps_recovery_under_later_positive_delta() -> None:
     state = {"day": 0}
     scar = {
         "type": "edge_delta",
@@ -244,7 +244,7 @@ def test_permanent_floor_scar_caps_recovery_under_later_positive_delta() -> None
         "event_id": "evt-scar",
         "from": "jordan-vale",
         "to": "sam-oduya",
-        "edges": {"trust": {"delta": -4, "floor": -2}},
+        "edges": {"trust": {"delta": -4, "cap": -2}},
     }
     recovery = {
         "type": "edge_delta",
@@ -262,6 +262,59 @@ def test_permanent_floor_scar_caps_recovery_under_later_positive_delta() -> None
     assert edge_qualities(recovered, "jordan-vale", "sam-oduya")["trust"]["value"] == -2
 
 
+def test_strictest_permanent_cap_wins_and_a_later_scar_cannot_loosen_it() -> None:
+    state = {"day": 0}
+    strict_scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-strict",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"trust": {"delta": -5, "cap": -5}},
+    }
+    looser_scar = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-looser",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"trust": {"delta": 8, "cap": 1}},
+    }
+
+    state = apply_event(state, strict_scar)
+    state = apply_event(state, looser_scar)
+
+    qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
+    assert qualities["trust"]["cap"] == -5
+    assert qualities["trust"]["value"] == -5
+
+
+def test_permanent_floor_scar_holds_recovery_under_later_negative_delta() -> None:
+    state = {"day": 0}
+    scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-scar",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"fear": {"delta": 6, "floor": 6}},
+    }
+    harm = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-harm",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"fear": {"delta": -10}},
+    }
+
+    scarred = apply_event(state, scar)
+    assert edge_qualities(scarred, "jordan-vale", "sam-oduya")["fear"]["value"] == 6
+
+    harmed = apply_event(scarred, harm)
+    assert edge_qualities(harmed, "jordan-vale", "sam-oduya")["fear"]["value"] == 6
+
+
 def test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it() -> None:
     state = {"day": 0}
     strict_scar = {
@@ -270,7 +323,7 @@ def test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it() -> N
         "event_id": "evt-strict",
         "from": "jordan-vale",
         "to": "sam-oduya",
-        "edges": {"trust": {"delta": -5, "floor": -5}},
+        "edges": {"fear": {"delta": 5, "floor": 5}},
     }
     looser_scar = {
         "type": "edge_delta",
@@ -278,12 +331,101 @@ def test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it() -> N
         "event_id": "evt-looser",
         "from": "jordan-vale",
         "to": "sam-oduya",
-        "edges": {"trust": {"delta": 8, "floor": 1}},
+        "edges": {"fear": {"delta": -8, "floor": 1}},
     }
 
     state = apply_event(state, strict_scar)
     state = apply_event(state, looser_scar)
 
     qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
-    assert qualities["trust"]["floor"] == -5
-    assert qualities["trust"]["value"] == -5
+    assert qualities["fear"]["floor"] == 5
+    assert qualities["fear"]["value"] == 5
+
+
+def test_cap_and_floor_accumulate_independently_and_pin_value_when_equal() -> None:
+    state = {"day": 0}
+    cap_scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-cap",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"rivalry": {"delta": 4, "cap": 4}},
+    }
+    floor_scar = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-floor",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"rivalry": {"delta": -1, "floor": 4}},
+    }
+    push_up = {
+        "type": "edge_delta",
+        "day": 3,
+        "event_id": "evt-push-up",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"rivalry": {"delta": 3}},
+    }
+    push_down = {
+        "type": "edge_delta",
+        "day": 4,
+        "event_id": "evt-push-down",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"rivalry": {"delta": -3}},
+    }
+
+    state = apply_event(state, cap_scar)
+    state = apply_event(state, floor_scar)
+    qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
+    assert qualities["rivalry"]["cap"] == 4
+    assert qualities["rivalry"]["floor"] == 4
+    assert qualities["rivalry"]["value"] == 4
+
+    state = apply_event(state, push_up)
+    assert edge_qualities(state, "jordan-vale", "sam-oduya")["rivalry"]["value"] == 4
+
+    state = apply_event(state, push_down)
+    assert edge_qualities(state, "jordan-vale", "sam-oduya")["rivalry"]["value"] == 4
+
+
+def test_single_change_with_floor_above_cap_is_rejected() -> None:
+    state = {"day": 0}
+    event = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-contradiction",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"trust": {"delta": 1, "cap": 2, "floor": 3}},
+    }
+
+    with pytest.raises(ValidationError, match="floor 3 exceeds cap 2"):
+        apply_event(state, event)
+
+
+def test_new_floor_contradicting_an_earlier_accumulated_cap_is_rejected() -> None:
+    state = {"day": 0}
+    cap_scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-cap",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"trust": {"delta": -3, "cap": -3}},
+    }
+    contradicting_floor = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-floor",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {"trust": {"delta": 0, "floor": 0}},
+    }
+
+    state = apply_event(state, cap_scar)
+
+    with pytest.raises(ValidationError, match="floor 0 exceeds cap -3"):
+        apply_event(state, contradicting_floor)
