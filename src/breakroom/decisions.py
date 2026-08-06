@@ -8,11 +8,13 @@ from typing import Any
 
 from breakroom import norms, worldstate
 
-# Only the Incident Response decision type from docs/design/decision-points.md is
-# implemented here. The other four Tier-0 types (Norm Pressure, Duty Conflict, Social
-# Disclosure, Resource Favor) are tracked in #38 and are deliberately not added here —
-# the design doc's own inventory says to stop rather than add a type silently.
+# Only the Incident Response and Norm Pressure decision types from
+# docs/design/decision-points.md are implemented here. The other three Tier-0 types
+# (Duty Conflict, Social Disclosure, Resource Favor) are tracked in #38 and are
+# deliberately not added here — the design doc's own inventory says to stop rather
+# than add a type silently.
 DECISION_TYPE = "incident_response"
+NORM_PRESSURE_TYPE = "norm_pressure"
 
 # Per-incident response options. No authored option-inventory source exists anywhere in
 # the repo yet (that's a follow-on concern, not this slice's) — this module-level dict,
@@ -82,6 +84,69 @@ DECISION_OPTIONS: dict[str, list[dict[str, Any]]] = {
             "payload": {"incident_id": "awkward-silence"},
             "candidate_norm_ids": ["belonging"],
             "risk": "moderate",
+        },
+    ],
+}
+
+# Per-action-kind options for Norm Pressure. Keyed by `candidate_action["action"]` using
+# the literal values `norms.py`'s two norm-pressure-shaped detectors
+# (`_expense_claim_overstated`, `_public_claim_omits_contributors`) gate on — those
+# guard literals are the vocabulary; there is no translation shim onto other action
+# names. Each set is a comply-shaped low-risk option (marked `fallback = true`), a
+# cut-corner-shaped higher-risk option, and a middle path, per #78.
+NORM_PRESSURE_OPTIONS: dict[str, list[dict[str, Any]]] = {
+    "submit_expense_claim": [
+        {
+            "id": "report_honest_amount",
+            "label": "Report the amount actually incurred",
+            "action": "submit_expense_claim",
+            "payload": {"method": "comply"},
+            "candidate_norm_ids": ["expense-honesty"],
+            "risk": "low",
+            "fallback": True,
+        },
+        {
+            "id": "round_up_slightly",
+            "label": "Round the claim up to a tidy number",
+            "action": "submit_expense_claim",
+            "payload": {"method": "round_up"},
+            "candidate_norm_ids": ["expense-honesty"],
+            "risk": "moderate",
+        },
+        {
+            "id": "submit_inflated_amount",
+            "label": "Submit the amount as inflated",
+            "action": "submit_expense_claim",
+            "payload": {"method": "cut_corner"},
+            "candidate_norm_ids": ["expense-honesty"],
+            "risk": "high",
+        },
+    ],
+    "present_work": [
+        {
+            "id": "credit_full_team",
+            "label": "Credit the full team's contribution",
+            "action": "present_work",
+            "payload": {"method": "comply"},
+            "candidate_norm_ids": ["credit-sharing"],
+            "risk": "low",
+            "fallback": True,
+        },
+        {
+            "id": "credit_self_primarily",
+            "label": "Present the work as mostly your own",
+            "action": "present_work",
+            "payload": {"method": "self_credit"},
+            "candidate_norm_ids": ["credit-sharing"],
+            "risk": "moderate",
+        },
+        {
+            "id": "claim_work_alone",
+            "label": "Claim the work entirely alone",
+            "action": "present_work",
+            "payload": {"method": "cut_corner"},
+            "candidate_norm_ids": ["credit-sharing"],
+            "risk": "high",
         },
     ],
 }
@@ -219,12 +284,184 @@ def decide_incident_response(
         model_client, payload, options
     )
 
+    return _finalize_decision(
+        decision_id=decision_id,
+        decision_type=DECISION_TYPE,
+        tick=tick,
+        character_id=character_id,
+        model_id=character["model"],
+        context_ref=context_ref,
+        options=options,
+        chosen_option=chosen_option,
+        rationale=rationale,
+        validation_status=validation_status,
+        fallback_reason=fallback_reason,
+        candidate_norm_ids=context["candidate_norm_ids"],
+        intervention_context=intervention_context,
+    )
+
+
+def assemble_norm_pressure_context(
+    *,
+    state: dict[str, Any],
+    characters: dict[str, dict[str, Any]],
+    candidate_action: dict[str, Any],
+    registry: norms.Registry,
+    pressure: list[str] | None = None,
+    events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Assemble the Norm Pressure required-context list from structured state only.
+
+    `candidate_action` is the caller-built record naming the norm-relevant shortcut on
+    the table — it carries `type: "decision"`, `character_id`, an `action` matching one
+    of `norms.py`'s detector guards, and that detector's evidence fields, so it can be
+    run straight through `norms.tag_record`/`_relevant_norm_ids` unchanged. No
+    chronicle prose, transcripts, or hidden lore enters this context — only `state`,
+    `characters`, the candidate action, and the norm registry, as
+    `docs/design/decision-points.md` requires.
+    """
+    character_id = candidate_action["character_id"]
+    character = characters[character_id]
+    pressure = list(pressure or [])
+
+    norm_violations = norms.tag_record(registry, candidate_action, state=state, events=events)[
+        "norm_violations"
+    ]
+    norm_evidence = {violation["norm_id"]: violation["evidence"] for violation in norm_violations}
+
+    return {
+        "candidate_action": candidate_action,
+        "candidate_norm_ids": _relevant_norm_ids(
+            registry, candidate_action, character, state=state, events=events
+        ),
+        "norm_evidence": norm_evidence,
+        "pressure": pressure,
+        "declared_values": character.get("declared_values", []),
+        "relationship_edges": worldstate.character_edges(state, character_id),
+    }
+
+
+def decide_norm_pressure(
+    *,
+    state: dict[str, Any],
+    characters: dict[str, dict[str, Any]],
+    candidate_action: dict[str, Any],
+    registry: norms.Registry,
+    model_client: ModelClient,
+    existing_decision_count: int,
+    pressure: list[str] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    intervention_context: list[str] | None = None,
+) -> DecisionResult:
+    """Resolve one Norm Pressure decision point on the acting character's own model.
+
+    Mirrors `decide_incident_response` exactly (see its docstring and #13's
+    Non-scope): only assembles context, calls `model_client`, validates and (if
+    needed) retries and falls back, and returns the two result objects. It never
+    calls `breakroom.resolution`, never writes to `traces/`, and never mutates
+    `state`, `characters`, or the norm registry.
+    """
+    intervention_context = list(intervention_context or [])
+    pressure = list(pressure or [])
+    character_id = candidate_action["character_id"]
+    character = characters[character_id]
+    tick = state["day"]
+    action = candidate_action.get("action")
+    if action not in NORM_PRESSURE_OPTIONS:
+        raise worldstate.ValidationError(
+            f"candidate_action['action'] must be one of {sorted(NORM_PRESSURE_OPTIONS)}"
+        )
+    options = NORM_PRESSURE_OPTIONS[action]
+
+    context = assemble_norm_pressure_context(
+        state=state,
+        characters=characters,
+        candidate_action=candidate_action,
+        registry=registry,
+        pressure=pressure,
+        events=events,
+    )
+
+    decision_id = f"dec-{existing_decision_count + 1:06d}"
+    context_ref = {
+        "state_path": "state/tower.json",
+        "event_sequence": len(events) if events is not None else 0,
+        "context_hash": f"sha256:{_hash_json(context)}",
+    }
+    payload = {
+        "decision_type": NORM_PRESSURE_TYPE,
+        "decision_id": decision_id,
+        "tick": tick,
+        "character": {
+            "id": character_id,
+            "name": character.get("name"),
+            "model": character["model"],
+            "stats": character["stats"],
+            "qualities": character.get("qualities", {}),
+            "declared_values": character.get("declared_values", []),
+        },
+        "context_ref": context_ref,
+        "situation": {
+            "candidate_action": candidate_action,
+            "pressure": pressure,
+        },
+        "options": options,
+        "response_schema": {
+            "choice_id": "one of options[].id",
+            "rationale": "short first-person reason",
+        },
+    }
+
+    chosen_option, rationale, validation_status, fallback_reason = _resolve_choice(
+        model_client, payload, options
+    )
+
+    return _finalize_decision(
+        decision_id=decision_id,
+        decision_type=NORM_PRESSURE_TYPE,
+        tick=tick,
+        character_id=character_id,
+        model_id=character["model"],
+        context_ref=context_ref,
+        options=options,
+        chosen_option=chosen_option,
+        rationale=rationale,
+        validation_status=validation_status,
+        fallback_reason=fallback_reason,
+        candidate_norm_ids=context["candidate_norm_ids"],
+        intervention_context=intervention_context,
+    )
+
+
+def _finalize_decision(
+    *,
+    decision_id: str,
+    decision_type: str,
+    tick: int,
+    character_id: str,
+    model_id: str,
+    context_ref: dict[str, Any],
+    options: list[dict[str, Any]],
+    chosen_option: dict[str, Any],
+    rationale: str | None,
+    validation_status: str,
+    fallback_reason: str | None,
+    candidate_norm_ids: list[str],
+    intervention_context: list[str],
+) -> DecisionResult:
+    """Build the attribution record and resolution-handoff `attempted_action`.
+
+    Shared by every `decide_*` entry point: the attribution shape (per
+    docs/design/decision-points.md's "Attribution Fields") and the attempted-action
+    shape (per its "Resolution Handoff") are identical across decision types, only
+    the type-specific inputs differ.
+    """
     attribution: dict[str, Any] = {
         "decision_id": decision_id,
-        "decision_type": DECISION_TYPE,
+        "decision_type": decision_type,
         "tick": tick,
         "character_id": character_id,
-        "model_id": character["model"],
+        "model_id": model_id,
         "context_ref": context_ref,
         "options": [
             {"id": option["id"], "payload_sha256": _hash_json(option["payload"])}
@@ -234,7 +471,7 @@ def decide_incident_response(
         "choice_payload": chosen_option["payload"],
         "rationale": rationale,
         "validation_status": validation_status,
-        "candidate_norm_ids": context["candidate_norm_ids"],
+        "candidate_norm_ids": candidate_norm_ids,
         "intervention_context": intervention_context,
     }
     if fallback_reason is not None:

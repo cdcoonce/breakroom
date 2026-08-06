@@ -6,7 +6,7 @@ import pytest
 
 from breakroom import decisions
 from breakroom.norms import Norm, Registry
-from breakroom.worldstate import apply_event
+from breakroom.worldstate import ValidationError, apply_event
 
 # ---------------------------------------------------------------------------
 # Fixtures shared across tests
@@ -650,6 +650,579 @@ def test_decide_incident_response_works_for_every_seeded_incident_id(
         state=state,
         characters={CHARACTER_ID: CHARACTER},
         incident_record=make_incident_record(incident_id=incident_id, room=room),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["validation_status"] == "valid"
+    assert result.attribution["choice_id"] == first_option_id
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — candidate-action fixtures
+# ---------------------------------------------------------------------------
+
+
+def make_expense_candidate_action(
+    *,
+    character_id: str = CHARACTER_ID,
+    amount_incurred: float = 40,
+    amount_reported: float = 65,
+    receipt_id: str = "receipt-1",
+) -> dict[str, Any]:
+    return {
+        "type": "decision",
+        "character_id": character_id,
+        "action": "submit_expense_claim",
+        "expense_claim": {
+            "amount_incurred": amount_incurred,
+            "amount_reported": amount_reported,
+            "receipt_id": receipt_id,
+        },
+    }
+
+
+def make_present_work_candidate_action(
+    *,
+    character_id: str = CHARACTER_ID,
+    actual_contributors: list[str] | None = None,
+    claimed_contributors: list[str] | None = None,
+    audience: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": "decision",
+        "character_id": character_id,
+        "action": "present_work",
+        "actual_contributors": actual_contributors or [CHARACTER_ID, "sam-oduya"],
+        "claimed_contributors": claimed_contributors or [CHARACTER_ID],
+        "audience": audience or ["manager"],
+    }
+
+
+EXPENSE_HONESTY_NORM = Norm(
+    id="expense-honesty",
+    scope="tower_policy",
+    description="Employees must not knowingly misrepresent expenses or reimbursement claims.",
+    severity="major",
+    detection="expense_claim_overstated",
+    tags=["honesty", "money"],
+    # `related_values` deliberately does NOT overlap CHARACTER's declared_values
+    # (["keep the peace", "do competent work"]) — this norm must reach
+    # candidate_norm_ids only via the fired-detector clause, isolating that clause
+    # from the related-values-overlap clause below.
+    related_values=["never lie to clients"],
+)
+
+CREDIT_SHARING_NORM = Norm(
+    id="credit-sharing",
+    scope="social_norm",
+    description="Employees must not claim sole credit for shared work in front of status "
+    "audiences.",
+    severity="moderate",
+    detection="public_claim_omits_contributors",
+    tags=["honesty", "teamwork"],
+    related_values=["never lie to clients"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — context assembly
+# ---------------------------------------------------------------------------
+
+
+def test_norm_pressure_context_contains_the_full_required_context_list() -> None:
+    state = make_state()
+    candidate_action = make_expense_candidate_action()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+        pressure=["deadline-looming"],
+    )
+
+    assert context["candidate_action"] == candidate_action
+    assert "candidate_norm_ids" in context
+    assert "norm_evidence" in context
+    assert context["pressure"] == ["deadline-looming"]
+    assert context["declared_values"] == CHARACTER["declared_values"]
+    assert "relationship_edges" in context
+
+
+def test_norm_pressure_context_pressure_defaults_to_empty_list() -> None:
+    state = make_state()
+    candidate_action = make_expense_candidate_action()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    assert context["pressure"] == []
+
+
+def test_seeded_expense_overstatement_fires_its_detector() -> None:
+    state = make_state()
+    candidate_action = make_expense_candidate_action(amount_incurred=40, amount_reported=65)
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    assert "expense-honesty" in context["candidate_norm_ids"]
+    assert context["norm_evidence"]["expense-honesty"] == {
+        "character_id": CHARACTER_ID,
+        "amount_incurred": 40,
+        "amount_reported": 65,
+        "receipt_id": "receipt-1",
+    }
+
+
+def test_seeded_present_work_omission_fires_its_detector() -> None:
+    state = make_state()
+    candidate_action = make_present_work_candidate_action(
+        actual_contributors=[CHARACTER_ID, "sam-oduya"],
+        claimed_contributors=[CHARACTER_ID],
+        audience=["manager"],
+    )
+    registry = make_registry(CREDIT_SHARING_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    assert "credit-sharing" in context["candidate_norm_ids"]
+    assert context["norm_evidence"]["credit-sharing"] == {
+        "character_id": CHARACTER_ID,
+        "work_item_id": None,
+        "omitted_contributors": ["sam-oduya"],
+        "audience": ["manager"],
+    }
+
+
+def test_norm_pressure_relevant_norms_include_a_related_values_overlap_norm() -> None:
+    state = make_state()
+    candidate_action = make_expense_candidate_action()
+    registry = make_registry(VALUE_OVERLAP_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    assert "keep-composure" in context["candidate_norm_ids"]
+
+
+def test_norm_pressure_relevant_norms_exclude_a_non_matching_norm() -> None:
+    state = make_state()
+    candidate_action = make_expense_candidate_action()
+    # CLEANUP_NORM's detector (incident_cleanup_owner_missed) never fires on a
+    # `type: "decision"` record, and its related_values don't overlap CHARACTER's
+    # declared_values either.
+    registry = make_registry(EXPENSE_HONESTY_NORM, CLEANUP_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    assert "clean-up-after-yourself" not in context["candidate_norm_ids"]
+
+
+def test_norm_pressure_relationship_edges_include_an_edge_seeded_via_edge_delta() -> None:
+    state = make_state()
+    state = apply_event(
+        state,
+        {
+            "type": "edge_delta",
+            "day": 7,
+            "event_id": "evt-1",
+            "from": CHARACTER_ID,
+            "to": "sam-oduya",
+            "edges": {"trust": {"delta": 2}},
+        },
+    )
+    candidate_action = make_expense_candidate_action()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+
+    edges = context["relationship_edges"]
+    assert any(
+        edge["from"] == CHARACTER_ID and edge["to"] == "sam-oduya" and "trust" in edge["qualities"]
+        for edge in edges
+    )
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — option inventory
+# ---------------------------------------------------------------------------
+
+
+def test_norm_pressure_options_cover_both_detector_backed_action_kinds() -> None:
+    assert set(decisions.NORM_PRESSURE_OPTIONS) == {"submit_expense_claim", "present_work"}
+    for action, options in decisions.NORM_PRESSURE_OPTIONS.items():
+        assert 2 <= len(options) <= 3, action
+        ids = [option["id"] for option in options]
+        assert len(ids) == len(set(ids)), action
+        assert any(option.get("fallback") is True for option in options), action
+        for option in options:
+            assert option["action"] == action
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — model routing + validation/retry/fallback FSM
+# ---------------------------------------------------------------------------
+
+
+def test_norm_pressure_decision_call_routes_to_the_characters_assigned_model() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient(
+        [{"choice_id": fallback_id, "rationale": "I will report it honestly."}]
+    )
+
+    decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["character"]["model"] == CHARACTER["model"]
+    assert client.calls[0]["character"]["id"] == CHARACTER_ID
+
+
+def test_norm_pressure_malformed_first_response_triggers_exactly_one_retry_then_succeeds() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    options = decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+    second_option = next(o for o in options if not o.get("fallback"))
+    client = RecordingModelClient(
+        [
+            {"choice_id": "not-a-real-option", "rationale": "??"},
+            {"choice_id": second_option["id"], "rationale": "Rounding it up a little."},
+        ]
+    )
+
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert "validation_error" in client.calls[1]
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == second_option["id"]
+
+
+def test_norm_pressure_two_malformed_responses_fall_back_to_marked_fallback_option() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    client = RecordingModelClient(
+        [
+            {"choice_id": "nope", "rationale": "??"},
+            {"choice_id": "still-nope", "rationale": "??"},
+        ]
+    )
+
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert len(client.calls) == 2
+    assert result.attribution["validation_status"] == "fallback"
+    assert "fallback_reason" in result.attribution
+    marked = next(
+        o
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback") is True
+    )
+    assert result.attribution["choice_id"] == marked["id"]
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — pressure passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_norm_pressure_pressure_passes_through_untouched_to_payload_situation() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient([{"choice_id": fallback_id, "rationale": "Honest is easiest."}])
+
+    decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+        pressure=["deadline-looming", "manager-nearby"],
+    )
+
+    assert client.calls[0]["situation"]["pressure"] == ["deadline-looming", "manager-nearby"]
+
+
+def test_norm_pressure_pressure_defaults_to_empty_list_in_payload() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient([{"choice_id": fallback_id, "rationale": "Honest is easiest."}])
+
+    decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert client.calls[0]["situation"]["pressure"] == []
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — unknown action validation
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_candidate_action_action_raises_validation_error() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    client = RecordingModelClient([])
+    candidate_action = make_expense_candidate_action()
+    candidate_action["action"] = "steal_supplies"
+
+    with pytest.raises(ValidationError) as exc_info:
+        decisions.decide_norm_pressure(
+            state=state,
+            characters={CHARACTER_ID: CHARACTER},
+            candidate_action=candidate_action,
+            registry=registry,
+            model_client=client,
+            existing_decision_count=0,
+        )
+
+    assert "present_work" in str(exc_info.value)
+    assert "submit_expense_claim" in str(exc_info.value)
+    assert client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — attribution record
+# ---------------------------------------------------------------------------
+
+
+def test_norm_pressure_attribution_record_carries_the_full_field_set() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient([{"choice_id": fallback_id, "rationale": "Honest is easiest."}])
+
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=5,
+    )
+    attribution = result.attribution
+
+    assert attribution["decision_id"] == "dec-000006"
+    assert attribution["decision_type"] == "norm_pressure"
+    assert attribution["tick"] == state["day"]
+    assert attribution["character_id"] == CHARACTER_ID
+    assert attribution["model_id"] == CHARACTER["model"]
+    assert attribution["context_ref"]["context_hash"].startswith("sha256:")
+    assert isinstance(attribution["options"], list) and attribution["options"]
+    for option_entry in attribution["options"]:
+        assert set(option_entry) == {"id", "payload_sha256"}
+    assert attribution["choice_id"] == fallback_id
+    assert attribution["validation_status"] == "valid"
+    assert "fallback_reason" not in attribution
+    assert "expense-honesty" in attribution["candidate_norm_ids"]
+
+    expected_fields = {
+        "decision_id",
+        "decision_type",
+        "tick",
+        "character_id",
+        "model_id",
+        "context_ref",
+        "options",
+        "choice_id",
+        "choice_payload",
+        "rationale",
+        "validation_status",
+        "candidate_norm_ids",
+        "intervention_context",
+    }
+    assert set(attribution) == expected_fields
+
+
+def test_norm_pressure_attribution_candidate_norm_ids_equals_context_set() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM, VALUE_OVERLAP_NORM, CLEANUP_NORM)
+    candidate_action = make_expense_candidate_action()
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient([{"choice_id": fallback_id, "rationale": "Honest is easiest."}])
+
+    context = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attribution["candidate_norm_ids"] == context["candidate_norm_ids"]
+    assert "expense-honesty" in result.attribution["candidate_norm_ids"]
+    assert "keep-composure" in result.attribution["candidate_norm_ids"]
+    assert "clean-up-after-yourself" not in result.attribution["candidate_norm_ids"]
+
+
+def test_norm_pressure_attempted_action_candidate_norm_ids_is_the_options_static_field() -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_option = next(
+        o for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"] if o.get("fallback")
+    )
+    client = RecordingModelClient(
+        [{"choice_id": fallback_option["id"], "rationale": "Honest is easiest."}]
+    )
+
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert result.attempted_action["type"] == "attempted_action"
+    assert result.attempted_action["action"] == fallback_option["action"]
+    assert result.attempted_action["payload"] == fallback_option["payload"]
+    assert result.attempted_action["candidate_norm_ids"] == fallback_option.get(
+        "candidate_norm_ids", []
+    )
+
+
+# ---------------------------------------------------------------------------
+# Norm Pressure — no resolution/state mutation
+# ---------------------------------------------------------------------------
+
+
+def test_decide_norm_pressure_does_not_mutate_state_or_characters() -> None:
+    state = make_state()
+    original_state = dict(state)
+    character_copy = dict(CHARACTER)
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    client = RecordingModelClient([{"choice_id": fallback_id, "rationale": "Honest is easiest."}])
+
+    decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: character_copy},
+        candidate_action=make_expense_candidate_action(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+    )
+
+    assert state == original_state
+    assert character_copy == CHARACTER
+
+
+@pytest.mark.parametrize(
+    "candidate_action_factory,action",
+    [
+        (make_expense_candidate_action, "submit_expense_claim"),
+        (make_present_work_candidate_action, "present_work"),
+    ],
+)
+def test_decide_norm_pressure_works_for_every_seeded_action_kind(
+    candidate_action_factory: Any, action: str
+) -> None:
+    state = make_state()
+    registry = make_registry(EXPENSE_HONESTY_NORM)
+    first_option_id = decisions.NORM_PRESSURE_OPTIONS[action][0]["id"]
+    client = RecordingModelClient([{"choice_id": first_option_id, "rationale": "Handling it."}])
+
+    result = decisions.decide_norm_pressure(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action_factory(),
         registry=registry,
         model_client=client,
         existing_decision_count=0,
