@@ -235,10 +235,12 @@ def _load_character(world: Path, character_id: str) -> dict[str, Any]:
     return character
 
 
-def _validate_character_qualities(relative: Path, qualities: dict[str, Any]) -> None:
+def _validate_character_qualities(relative: Path, qualities: Any) -> None:
+    if not isinstance(qualities, dict):
+        raise ValidationError(f"{relative}: qualities must be a table of namespaced keys")
     for key, value in qualities.items():
-        namespace, sep, _name = key.partition(":")
-        if not sep or namespace not in _CHARACTER_QUALITY_NAMESPACES:
+        namespace, sep, name = key.partition(":")
+        if not sep or not name or namespace not in _CHARACTER_QUALITY_NAMESPACES:
             raise ValidationError(f"{relative}: invalid quality namespace {key!r}")
         if value is True:
             continue
