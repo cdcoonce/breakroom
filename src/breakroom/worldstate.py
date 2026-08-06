@@ -36,6 +36,7 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         next_state["morale"] += event["incident"].get("morale_delta", 0)
     elif event_type == "scene":
         next_state["day"] = max(next_state["day"], event["day"])
+        _apply_scene_spotlight(next_state, event)
     elif event_type == "dial_delta":
         next_state["day"] = max(next_state["day"], event["day"])
         for dial, delta in event["dials"].items():
@@ -80,6 +81,13 @@ def edge_provenance(state: dict[str, Any], from_id: str, to_id: str, quality: st
     return [change["event_id"] for change in entry["history"]]
 
 
+def ticks_since_spotlight(state: dict[str, Any], character_id: str, current_day: int) -> int | None:
+    last_day = state.get("spotlight_history", {}).get(character_id)
+    if last_day is None:
+        return None
+    return current_day - last_day
+
+
 def _pair_key(from_id: str, to_id: str) -> str:
     return f"{from_id}->{to_id}"
 
@@ -87,6 +95,23 @@ def _pair_key(from_id: str, to_id: str) -> str:
 def _split_pair_key(pair_key: str) -> tuple[str, str]:
     from_id, to_id = pair_key.split("->", 1)
     return from_id, to_id
+
+
+def _apply_scene_spotlight(state: dict[str, Any], event: dict[str, Any]) -> None:
+    if "character_ids" not in event:
+        return
+    character_ids = event["character_ids"]
+
+    if not isinstance(character_ids, list) or not character_ids:
+        raise ValidationError("scene event: character_ids must be a non-empty list of strings")
+    if not all(isinstance(character_id, str) for character_id in character_ids):
+        raise ValidationError("scene event: character_ids must be a non-empty list of strings")
+    if "storylet_id" not in event or not isinstance(event["storylet_id"], str):
+        raise ValidationError("scene event: character_ids present without storylet_id")
+
+    spotlight_history = state.setdefault("spotlight_history", {})
+    for character_id in character_ids:
+        spotlight_history[character_id] = event["day"]
 
 
 def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
