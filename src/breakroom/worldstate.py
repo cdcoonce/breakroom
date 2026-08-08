@@ -211,6 +211,10 @@ def _validate_tower(state: dict[str, Any]) -> None:
     for field in ("seed", "day", "budget", "morale", "reputation", "rooms", "characters"):
         if field not in state:
             raise ValidationError(f"state/tower.json: missing {field}")
+    for field in ("seed", "day", "budget", "morale", "reputation"):
+        value = state[field]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValidationError(f"state/tower.json: {field} must be an int")
     if not isinstance(state["rooms"], list):
         raise ValidationError("state/tower.json: rooms must be a list")
     if not isinstance(state["characters"], list):
