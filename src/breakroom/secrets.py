@@ -10,6 +10,7 @@ from breakroom.events import append_event
 from breakroom.resolution.rng import RngStream
 
 REVEAL_THRESHOLD = 0.8
+NEAR_EXPOSURE_THRESHOLD = 0.6
 
 _REQUIRED_RECORD_FIELDS = (
     "id",
