@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import tomllib
 from pathlib import Path
@@ -9,36 +8,8 @@ from typing import Any
 from breakroom import jsonio, norms
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
-
-# `norm_tags` here is authored vocabulary for the incident type. It is NOT the engine's
-# output — the emitted event carries that separately as a top-level key. `needs_cleanup`
-# decides whether the incident leaves a physical mess someone owns clearing.
-INCIDENTS = [
-    {
-        "id": "coffee-spill",
-        "name": "Coffee Spill",
-        "room": "break-room",
-        "morale_delta": -2,
-        "norm_tags": ["care", "shared-space"],
-        "needs_cleanup": True,
-    },
-    {
-        "id": "printer-jam",
-        "name": "Printer Jam",
-        "room": "open-office",
-        "morale_delta": -1,
-        "norm_tags": ["duty", "patience"],
-        "needs_cleanup": True,
-    },
-    {
-        "id": "awkward-silence",
-        "name": "Awkward Silence",
-        "room": "break-room",
-        "morale_delta": -2,
-        "norm_tags": ["belonging", "candor"],
-        "needs_cleanup": False,
-    },
-]
+from breakroom.resolution.incidents import evaluate_tick, load_incident_table
+from breakroom.resolution.rng import RngStream, RollLog
 
 STORYLETS = {
     "coffee-spill": {
@@ -63,43 +34,78 @@ def tick_world(world: Path) -> None:
     state_path = world / "state" / "tower.json"
     state = json.loads(state_path.read_text())
     day = state["day"] + 1
-    incident = select_incident(seed=state["seed"], day=day)
-    storylet = STORYLETS[incident["id"]]
+
+    roll_log = RollLog()
+    table = load_incident_table(world)
+    resolution = evaluate_tick(table, state=state, seed=state["seed"], tick=day, log=roll_log)
+
+    fired_ids = sorted(
+        {
+            member["incident_id"]
+            for cascade in resolution.cascades
+            for member in cascade["members"]
+        }
+    )
+    details: dict[str, dict[str, Any]] = {}
+    for event in resolution.events:
+        if event.get("type") == "incident_detail":
+            details.setdefault(event["incident_id"], event)
 
     # The cleanup owner is the acting character, so the cast has to be resolved before
-    # the incident event is emitted.
+    # any incident event is emitted. Per-incident casting is storylet work (#75/#76).
     character = load_character(world, state["characters"][0])
-
-    # A copy: INCIDENTS is module-level shared state and the raw entry stays raw, so the
-    # room lookup, the brief, and the chronicle keep reading it unwidened. `resolved` is
-    # a literal False — nothing in the system can clean anything up until the decisions
-    # engine (#13) lands.
-    emitted_incident = {
-        **incident,
-        "cleanup_owner": character["id"] if incident["needs_cleanup"] else None,
-        "resolved": False,
-    }
-    incident_event: dict[str, Any] = {
-        "type": "incident",
-        "day": day,
-        "incident": emitted_incident,
-        "storylet": storylet,
-    }
     registry = _load_registry(world)
-    norm_violations: list[dict[str, Any]] = []
-    if registry is not None:
-        tags = norms.tag_record(registry, incident_event)
-        norm_violations = tags["norm_violations"]
-        incident_event.update(tags)
-    append_event(world, incident_event)
 
-    room = next(room for room in state["rooms"] if room["id"] == incident["room"])
+    incidents: dict[str, dict[str, Any]] = {}
+    for incident_id in fired_ids:
+        detail = details[incident_id]
+        incident = {
+            "id": incident_id,
+            "name": detail["name"],
+            "room": detail["room"],
+            "morale_delta": detail["morale_delta"],
+            "norm_tags": detail["norm_tags"],
+            "needs_cleanup": detail["needs_cleanup"],
+        }
+        incidents[incident_id] = {
+            **incident,
+            "cleanup_owner": character["id"] if incident["needs_cleanup"] else None,
+            "resolved": False,
+        }
+
+    # Drift is a mechanic, not presentation: every fired incident's violations feed it,
+    # not just the spotlight one's. Accumulated in sorted incident-id order so the
+    # scene event's integrity_drift is stable for a given seed.
+    norm_violations: list[dict[str, Any]] = []
+    for incident_id in fired_ids:
+        emitted_incident = incidents[incident_id]
+        incident_event: dict[str, Any] = {
+            "type": "incident",
+            "day": day,
+            "incident": emitted_incident,
+            "storylet": STORYLETS[incident_id],
+        }
+        if registry is not None:
+            tags = norms.tag_record(registry, incident_event)
+            norm_violations.extend(tags["norm_violations"])
+            incident_event.update(tags)
+        append_event(world, incident_event)
+        state["morale"] += emitted_incident["morale_delta"]
+
+    spotlight_rng = RngStream(seed=state["seed"], stream="spotlight", tick=day, log=roll_log)
+    spotlight_id = spotlight_rng.weighted_choice(
+        "spotlight-draw", [(incident_id, 1.0) for incident_id in fired_ids]
+    )
+    spotlight_incident = incidents[spotlight_id]
+    spotlight_storylet = STORYLETS[spotlight_id]
+
+    room = next(room for room in state["rooms"] if room["id"] == spotlight_incident["room"])
     brief = {
         "day": day,
         "character": character,
         "room": room,
-        "incident": incident,
-        "storylet": storylet,
+        "incident": spotlight_incident,
+        "storylet": spotlight_storylet,
         "state": {
             "budget": state["budget"],
             "morale": state["morale"],
@@ -111,8 +117,9 @@ def tick_world(world: Path) -> None:
         "type": "scene",
         "day": day,
         "character_id": character["id"],
-        "incident_id": incident["id"],
+        "incident_id": spotlight_id,
         "brief": brief,
+        "rolls": roll_log.records,
         "prose": prose,
     }
     if registry is not None:
@@ -122,7 +129,6 @@ def tick_world(world: Path) -> None:
     append_event(world, scene_event)
 
     state["day"] = day
-    state["morale"] += incident["morale_delta"]
     jsonio.write_pretty_json(state_path, state)
     write_chronicle(world, day=day, brief=brief, prose=prose)
 
@@ -136,11 +142,6 @@ def _load_registry(world: Path) -> norms.Registry | None:
     if not (world / "data" / "norms.toml").exists():
         return None
     return norms.load_registry(world)
-
-
-def select_incident(seed: int, day: int) -> dict[str, Any]:
-    digest = hashlib.sha256(f"{seed}:{day}:incident".encode()).hexdigest()
-    return INCIDENTS[int(digest, 16) % len(INCIDENTS)]
 
 
 def load_character(world: Path, character_id: str) -> dict[str, Any]:

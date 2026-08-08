@@ -30,10 +30,20 @@ def tick_once(world: Path, seed: int) -> None:
     assert main(["tick", "--world", str(world)]) == 0
 
 
-# Seed 1 selects printer-jam on day 1 (needs_cleanup); seed 9 selects awkward-silence
-# (no mess to clean). Both branches of the detector are reachable on a single tick.
+def incident_by_id(world: Path, incident_id: str) -> dict:
+    return next(
+        event for event in events_of(world, "incident") if event["incident"]["id"] == incident_id
+    )
+
+
+# base_rate = 1.0 on every starter incident, so all three fire on every tick regardless
+# of seed; the seed only decides which one gets the spotlight draw and thus which
+# incident the scene, brief, and chronicle are about. Integrity drift is a mechanic
+# rather than presentation, so it covers every fired incident's violations however the
+# draw lands. Seed 1 spotlights coffee-spill (needs_cleanup); seed 5 spotlights
+# awkward-silence (no mess to clean).
 CLEANUP_SEED = 1
-NO_CLEANUP_SEED = 9
+NO_CLEANUP_SEED = 5
 
 
 def test_init_scaffolds_a_registry_that_load_registry_accepts(tmp_path: Path) -> None:
@@ -55,8 +65,7 @@ def test_cleanup_incident_emits_a_norm_violation(tmp_path: Path, stub_narrator) 
     world = tmp_path / "tower"
     tick_once(world, CLEANUP_SEED)
 
-    incident_event = events_of(world, "incident")[0]
-    assert incident_event["incident"]["id"] == "printer-jam"
+    incident_event = incident_by_id(world, "printer-jam")
     violations = incident_event["norm_violations"]
     assert [violation["norm_id"] for violation in violations] == ["clean-up-after-yourself"]
     assert violations[0]["evidence"]["cleanup_owner"] == "jordan-vale"
@@ -68,8 +77,7 @@ def test_incident_without_cleanup_emits_no_violation(tmp_path: Path, stub_narrat
     world = tmp_path / "tower"
     tick_once(world, NO_CLEANUP_SEED)
 
-    incident_event = events_of(world, "incident")[0]
-    assert incident_event["incident"]["id"] == "awkward-silence"
+    incident_event = incident_by_id(world, "awkward-silence")
     assert incident_event["incident"]["cleanup_owner"] is None
     assert incident_event["norm_violations"] == []
     assert incident_event["norm_tags"] == []
@@ -81,7 +89,7 @@ def test_authored_incident_tags_survive_beside_detected_tags(
     world = tmp_path / "tower"
     tick_once(world, CLEANUP_SEED)
 
-    incident_event = events_of(world, "incident")[0]
+    incident_event = incident_by_id(world, "printer-jam")
     # Nested: authored vocabulary for the incident type. Top-level: what the engine
     # detected this tick. Two different things — neither may absorb the other.
     assert incident_event["incident"]["norm_tags"] == ["duty", "patience"]
@@ -100,11 +108,28 @@ def test_scene_event_records_integrity_drift(tmp_path: Path, stub_narrator) -> N
     assert drift[0]["declared_values"] == ["do competent work"]
 
 
-def test_scene_event_has_no_drift_without_a_violation(tmp_path: Path, stub_narrator) -> None:
+def test_scene_drift_covers_every_fired_incident_not_only_the_spotlight(
+    tmp_path: Path, stub_narrator
+) -> None:
+    """The spotlight draw narrows the scene, never the character-integrity ledger."""
     world = tmp_path / "tower"
     tick_once(world, NO_CLEANUP_SEED)
 
-    assert events_of(world, "scene")[0]["integrity_drift"] == []
+    scene_event = events_of(world, "scene")[0]
+    # The spotlight landed on the one incident that leaves nothing to clean up...
+    assert scene_event["incident_id"] == "awkward-silence"
+    # ...but the other two fired all the same and were left uncleaned by the same
+    # character, so their violations must still reach the drift ledger.
+    violating = sorted(
+        event["incident"]["id"]
+        for event in events_of(world, "incident")
+        if event["norm_violations"]
+    )
+    assert violating == ["coffee-spill", "printer-jam"]
+    drift = scene_event["integrity_drift"]
+    assert len(drift) == len(violating)
+    assert [entry["norm_id"] for entry in drift] == ["clean-up-after-yourself"] * len(violating)
+    assert {entry["character_id"] for entry in drift} == {"jordan-vale"}
 
 
 def test_tick_without_a_registry_omits_the_norm_keys(tmp_path: Path, stub_narrator) -> None:
@@ -115,22 +140,10 @@ def test_tick_without_a_registry_omits_the_norm_keys(tmp_path: Path, stub_narrat
 
     assert main(["tick", "--world", str(world)]) == 0
 
-    incident_event = events_of(world, "incident")[0]
-    assert "norm_tags" not in incident_event
-    assert "norm_violations" not in incident_event
+    for incident_event in events_of(world, "incident"):
+        assert "norm_tags" not in incident_event
+        assert "norm_violations" not in incident_event
     assert "integrity_drift" not in events_of(world, "scene")[0]
     # The tick still completed: state advanced and the chronicle was written.
     assert json.loads((world / "state" / "tower.json").read_text())["day"] == 1
     assert (world / "chronicles" / "day-0001.md").exists()
-
-
-def test_tick_does_not_mutate_the_shared_incident_table(tmp_path: Path, stub_narrator) -> None:
-    """The widened payload must be a copy — INCIDENTS is module-level shared state."""
-    from breakroom.tick import INCIDENTS
-
-    world = tmp_path / "tower"
-    tick_once(world, CLEANUP_SEED)
-
-    for entry in INCIDENTS:
-        assert "cleanup_owner" not in entry
-        assert "resolved" not in entry
