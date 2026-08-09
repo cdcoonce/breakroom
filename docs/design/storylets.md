@@ -43,7 +43,6 @@ max_count = 2
 id = "cleanup_choice"
 decision_type = "incident_response"
 character_slot = "responder"
-option_set = "cleanup_or_ignore"
 
 [[effect_hooks]]
 hook = "incident_cleanup_resolution"
@@ -105,8 +104,6 @@ Each decision point binds:
 
 - `decision_type`
 - the deciding `character_slot`
-- an `option_set` id implemented by #13
-- candidate norm ids via the option set
 - effect hooks for resolution
 
 An `ambient` storylet has no decision point and goes straight to narrator performance after
@@ -169,14 +166,37 @@ Inputs:
 
 Scores floor at `0.1` so every eligible storylet remains drawable.
 
+### Worked Example
+
+`shared-space-repair` on a hot tick, copied from
+`tests/test_storylets.py::test_salience_worked_example_hot_incident_tick`. Tick `12`,
+`morale = 10`, `budget = 100`, a contract deadline at tick `13`, a `coffee-spill` incident
+emitted this tick with `cleanup_owner = "jordan-vale"`, edge deltas of `+2` at tick `10`
+and `-1` at tick `11` touching that responder, one secret of theirs at
+`exposure_risk = 0.5`, a director action targeting `coffee-spill`, a last spotlight at
+tick `8`, and `storylet_bias = 0.5`:
+
+```text
+base                          1.0
+fresh_incident_weight        +4.0   (coffee-spill emitted this tick)
+hot_edge_weight              +1.5   (0.5 * (|+2| + |-1|))
+exposure_weight              +1.5   (3.0 * 0.5)
+pressure_weight              +5.0   (low morale 2.0 + deadline 2.0 + budget 1.0)
+intervention_weight          +2.0   (director action targets the incident)
+time_since_spotlight_weight  +1.0   ((12 - 8) * 0.25)
+storylet_bias                +0.5
+                            -----
+score                        16.5
+```
+
 ## Seeded Weighted Draw
 
-The storylet engine uses RNG stream `storylet.select`.
+The storylet engine uses RNG stream `storylet_select`.
 
 Seed key:
 
 ```text
-tower_seed + tick + "storylet.select"
+tower_seed + tick + "storylet_select"
 ```
 
 Draw steps:
@@ -190,7 +210,7 @@ Draw steps:
 Participant slot draws use:
 
 ```text
-tower_seed + tick + "storylet.participant" + storylet_id + slot
+tower_seed + tick + "storylet_participant" + storylet_id + slot
 ```
 
 This keeps same seed + same state reproducible while avoiding one global RNG stream where adding a

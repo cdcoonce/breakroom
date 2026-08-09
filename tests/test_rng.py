@@ -34,7 +34,7 @@ def test_interleaving_streams_does_not_change_single_stream_sequence() -> None:
 
 def test_draw_primitives_record_auditable_rolls() -> None:
     log = RollLog()
-    rng = RngStream(seed=42, stream="storylet_draw", tick=5, log=log)
+    rng = RngStream(seed=42, stream="storylet_select", tick=5, log=log)
 
     uniform = rng.uniform("salience jitter")
     bernoulli = rng.bernoulli("secret exposure", probability=0.25)
@@ -42,7 +42,7 @@ def test_draw_primitives_record_auditable_rolls() -> None:
 
     assert len(log.records) == 3
     assert log.records[0] == {
-        "stream": "storylet_draw",
+        "stream": "storylet_select",
         "tick": 5,
         "purpose": "salience jitter",
         "primitive": "uniform",
