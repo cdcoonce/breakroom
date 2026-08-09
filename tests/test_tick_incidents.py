@@ -1,10 +1,12 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from breakroom.cli import main
 from breakroom.resolution.incidents import load_incident_table
+from breakroom.tick import QUIET_DAY_PROSE
 from breakroom.worldstate import ValidationError
 
 
@@ -14,6 +16,18 @@ def read_jsonl(path: Path) -> list[dict]:
 
 def events_of(world: Path, event_type: str) -> list[dict]:
     return [event for event in read_jsonl(world / "events.jsonl") if event["type"] == event_type]
+
+
+def silence_incidents(world: Path) -> None:
+    """Force a zero-incident tick by zeroing every base_rate.
+
+    `bernoulli(probability=0.0)` never fires, so this makes the quiet day
+    deterministic rather than waiting on an unlucky seed. Rewriting the rate
+    rather than deleting the table keeps the roll receipts: each incident is
+    still rolled for and still lands in the roll log.
+    """
+    table = world / "data" / "incidents.toml"
+    table.write_text(re.sub(r"base_rate = [\d.]+", "base_rate = 0.0", table.read_text()))
 
 
 @pytest.fixture
@@ -61,6 +75,65 @@ def test_tick_emits_one_incident_event_per_fired_incident_and_one_scene(
         "awkward-silence",
     }
     assert len(events_of(world, "scene")) == 1
+
+
+def test_a_tick_where_no_incident_fires_is_a_quiet_day_not_a_crash(
+    tmp_path: Path, stub_narrator
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    silence_incidents(world)
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    assert events_of(world, "incident") == []
+    assert events_of(world, "scene") == []
+
+
+def test_a_quiet_day_still_advances_the_day_and_writes_a_scene_free_chronicle(
+    tmp_path: Path, stub_narrator
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    silence_incidents(world)
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    assert json.loads((world / "state" / "tower.json").read_text())["day"] == 1
+    chronicle = (world / "chronicles" / "day-0001.md").read_text()
+    assert chronicle.startswith("# Day 0001")
+    assert QUIET_DAY_PROSE in chronicle
+    assert "None" not in chronicle.split("## Trace")[0]
+
+
+def test_a_quiet_day_records_the_rolls_that_made_it_quiet(tmp_path: Path, stub_narrator) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    silence_incidents(world)
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    # Without a scene event there is nothing else carrying the roll log, so a quiet
+    # day would otherwise leave no trace at all of why nothing happened.
+    quiet_events = events_of(world, "quiet_day")
+    assert len(quiet_events) == 1
+    assert quiet_events[0]["day"] == 1
+    rolls = quiet_events[0]["rolls"]
+    assert rolls
+    assert {record["stream"] for record in rolls} == {"incidents"}
+    assert all(record["result"] is False for record in rolls)
+
+
+def test_a_quiet_day_never_calls_the_narrator(tmp_path: Path, monkeypatch) -> None:
+    def render_scene(brief: dict) -> str:
+        raise AssertionError("a quiet day has no scene to narrate")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", render_scene)
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    silence_incidents(world)
+
+    assert main(["tick", "--world", str(world)]) == 0
 
 
 def test_morale_reflects_the_sum_of_every_fired_incidents_delta(
