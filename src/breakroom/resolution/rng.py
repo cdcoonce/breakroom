@@ -63,6 +63,8 @@ class RngStream:
     def weighted_choice(self, purpose: str, choices: Sequence[tuple[T, float]]) -> T:
         if not choices:
             raise ValueError("choices must not be empty")
+        if any(weight < 0 for _, weight in choices):
+            raise ValueError("choice weights must be non-negative")
         total = sum(weight for _, weight in choices)
         if total <= 0:
             raise ValueError("total choice weight must be positive")
@@ -70,8 +72,6 @@ class RngStream:
         running = 0.0
         result = choices[-1][0]
         for value, weight in choices:
-            if weight < 0:
-                raise ValueError("choice weights must be non-negative")
             running += weight
             if target < running:
                 result = value

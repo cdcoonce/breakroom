@@ -1,3 +1,5 @@
+import pytest
+
 from breakroom.resolution.rng import RngStream, RollLog
 
 
@@ -48,3 +50,10 @@ def test_draw_primitives_record_auditable_rolls() -> None:
     }
     assert log.records[1]["result"] is bernoulli
     assert log.records[2]["result"] == choice
+
+
+def test_weighted_choice_rejects_negative_weight_sorted_after_winner() -> None:
+    rng = RngStream(seed=42, stream="incidents", tick=3)
+
+    with pytest.raises(ValueError, match="choice weights must be non-negative"):
+        rng.weighted_choice("spotlight", [("a", 10), ("b", -5)])
