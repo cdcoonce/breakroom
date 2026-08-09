@@ -47,6 +47,20 @@ def test_load_world_validates_tower_fields_precisely(tmp_path: Path) -> None:
         load_world(world)
 
 
+def test_load_world_rejects_non_int_scalar_field(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    state = json.loads((world / "state" / "tower.json").read_text())
+    state["morale"] = "50"
+    (world / "state" / "tower.json").write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="state/tower.json: morale must be an int"):
+        load_world(world)
+
+
 def test_replaying_event_log_reproduces_current_state(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
