@@ -109,6 +109,22 @@ def test_independent_event_application_is_order_stable_and_pure() -> None:
     assert state["reputation"] == 50
 
 
+def test_dial_delta_with_unknown_dial_is_rejected() -> None:
+    state = {
+        "seed": 42,
+        "day": 0,
+        "budget": 1000,
+        "morale": 50,
+        "reputation": 50,
+        "rooms": [],
+        "characters": [],
+    }
+    event = {"type": "dial_delta", "day": 1, "dials": {"unknown_dial": 1}}
+
+    with pytest.raises(ValidationError, match="unknown_dial"):
+        apply_event(state, event)
+
+
 def test_edge_delta_without_event_id_is_rejected() -> None:
     state = {"day": 0}
     event = {
