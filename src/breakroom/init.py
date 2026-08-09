@@ -44,6 +44,51 @@ related_values = ["do competent work"]
 """
 
 
+# Ported verbatim from tick.py's old hardcoded INCIDENTS table. `base_rate = 1.0` fires
+# every incident every tick — probabilistic rates, preconditions, and cascades are the
+# engine's job (tested in tests/test_incidents.py), not this starter table's.
+STARTER_INCIDENTS = """\
+[[incidents]]
+id = "coffee-spill"
+base_rate = 1.0
+rooms = ["break-room"]
+
+  [[incidents.effects]]
+  type = "incident_detail"
+  name = "Coffee Spill"
+  room = "break-room"
+  morale_delta = -2
+  norm_tags = ["care", "shared-space"]
+  needs_cleanup = true
+
+[[incidents]]
+id = "printer-jam"
+base_rate = 1.0
+rooms = ["open-office"]
+
+  [[incidents.effects]]
+  type = "incident_detail"
+  name = "Printer Jam"
+  room = "open-office"
+  morale_delta = -1
+  norm_tags = ["duty", "patience"]
+  needs_cleanup = true
+
+[[incidents]]
+id = "awkward-silence"
+base_rate = 1.0
+rooms = ["break-room"]
+
+  [[incidents.effects]]
+  type = "incident_detail"
+  name = "Awkward Silence"
+  room = "break-room"
+  morale_delta = -2
+  norm_tags = ["belonging", "candor"]
+  needs_cleanup = false
+"""
+
+
 def init_world(world: Path, seed: int) -> None:
     (world / "characters").mkdir(parents=True, exist_ok=True)
     (world / "chronicles").mkdir(parents=True, exist_ok=True)
@@ -67,4 +112,5 @@ def init_world(world: Path, seed: int) -> None:
         STARTER_CHARACTER, encoding="utf-8"
     )
     (world / "data" / "norms.toml").write_text(STARTER_NORMS, encoding="utf-8")
+    (world / "data" / "incidents.toml").write_text(STARTER_INCIDENTS, encoding="utf-8")
     (world / "events.jsonl").write_text("", encoding="utf-8")

@@ -40,23 +40,31 @@ def test_tick_appends_events_updates_state_and_writes_chronicle(
 
     state = json.loads((world / "state" / "tower.json").read_text())
     assert state["day"] == 2
-    assert state["morale"] == 46
+    assert state["morale"] == 40
     assert state["reputation"] == 50
 
     events = read_jsonl(world / "events.jsonl")
+    # base_rate = 1.0 on every starter incident fires all three each tick: one "incident"
+    # event apiece, plus one "scene" event for the spotlight draw.
     assert [event["type"] for event in events] == [
         "incident",
+        "incident",
+        "incident",
         "scene",
+        "incident",
+        "incident",
         "incident",
         "scene",
     ]
-    assert events[0]["incident"]["id"] == "coffee-spill"
-    assert events[0]["storylet"]["id"] == "shared-space-repair"
-    assert events[2]["incident"]["id"] == "awkward-silence"
-    assert [event["sequence"] for event in events] == [1, 2, 3, 4]
+    assert events[0]["incident"]["id"] == "awkward-silence"
+    assert events[0]["storylet"]["id"] == "quiet-room"
+    assert events[1]["incident"]["id"] == "coffee-spill"
+    assert events[2]["incident"]["id"] == "printer-jam"
+    assert events[3]["incident_id"] == "awkward-silence"
+    assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5, 6, 7, 8]
 
     first_chronicle = (world / "chronicles" / "day-0001.md").read_text()
-    assert "Jordan Vale faced Coffee Spill." in first_chronicle
+    assert "Jordan Vale faced Awkward Silence." in first_chronicle
     assert "brief:" in first_chronicle
 
 
