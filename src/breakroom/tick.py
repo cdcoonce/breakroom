@@ -29,6 +29,8 @@ STORYLETS = {
     },
 }
 
+QUIET_DAY_PROSE = "No incident fired today. The tower kept to itself."
+
 
 def tick_world(world: Path) -> None:
     state_path = world / "state" / "tower.json"
@@ -92,41 +94,59 @@ def tick_world(world: Path) -> None:
         append_event(world, incident_event)
         state["morale"] += emitted_incident["morale_delta"]
 
-    spotlight_rng = RngStream(seed=state["seed"], stream="spotlight", tick=day, log=roll_log)
-    spotlight_id = spotlight_rng.weighted_choice(
-        "spotlight-draw", [(incident_id, 1.0) for incident_id in fired_ids]
-    )
-    spotlight_incident = incidents[spotlight_id]
-    spotlight_storylet = STORYLETS[spotlight_id]
-
-    room = next(room for room in state["rooms"] if room["id"] == spotlight_incident["room"])
-    brief = {
+    world_state = {
+        "budget": state["budget"],
+        "morale": state["morale"],
+        "reputation": state["reputation"],
+    }
+    brief: dict[str, Any] = {
         "day": day,
         "character": character,
-        "room": room,
-        "incident": spotlight_incident,
-        "storylet": spotlight_storylet,
-        "state": {
-            "budget": state["budget"],
-            "morale": state["morale"],
-            "reputation": state["reputation"],
-        },
+        "room": None,
+        "incident": None,
+        "storylet": None,
+        "state": world_state,
     }
-    prose = render_scene(brief)
-    scene_event: dict[str, Any] = {
-        "type": "scene",
-        "day": day,
-        "character_id": character["id"],
-        "incident_id": spotlight_id,
-        "brief": brief,
-        "rolls": roll_log.records,
-        "prose": prose,
-    }
-    if registry is not None:
-        scene_event["integrity_drift"] = norms.integrity_drift(
-            character, registry, norm_violations
+    prose: str | None = None
+
+    # `base_rate` is a bernoulli probability, so a day where nothing fires is a legal
+    # outcome, not an error. It gets no spotlight draw and no scene event: there is
+    # nothing to narrate, and the chronicle renderer (#17) is specified to accept a
+    # missing scene and emit a digest-only episode.
+    if fired_ids:
+        spotlight_rng = RngStream(seed=state["seed"], stream="spotlight", tick=day, log=roll_log)
+        spotlight_id = spotlight_rng.weighted_choice(
+            "spotlight-draw", [(incident_id, 1.0) for incident_id in fired_ids]
         )
-    append_event(world, scene_event)
+        spotlight_incident = incidents[spotlight_id]
+        spotlight_storylet = STORYLETS[spotlight_id]
+
+        room = next(room for room in state["rooms"] if room["id"] == spotlight_incident["room"])
+        brief |= {
+            "room": room,
+            "incident": spotlight_incident,
+            "storylet": spotlight_storylet,
+        }
+        prose = render_scene(brief)
+        scene_event: dict[str, Any] = {
+            "type": "scene",
+            "day": day,
+            "character_id": character["id"],
+            "incident_id": spotlight_id,
+            "brief": brief,
+            "rolls": roll_log.records,
+            "prose": prose,
+        }
+        if registry is not None:
+            scene_event["integrity_drift"] = norms.integrity_drift(
+                character, registry, norm_violations
+            )
+        append_event(world, scene_event)
+    else:
+        # The scene event is the only carrier of the roll log on an ordinary day, so a
+        # quiet day needs its own record: otherwise the tick appends nothing at all and
+        # the day is missing from the event chronology along with its receipts.
+        append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
 
     state["day"] = day
     jsonio.write_pretty_json(state_path, state)
@@ -150,10 +170,15 @@ def load_character(world: Path, character_id: str) -> dict[str, Any]:
     return {"id": character_id, **character}
 
 
-def write_chronicle(world: Path, day: int, brief: dict[str, Any], prose: str) -> None:
+def write_chronicle(world: Path, day: int, brief: dict[str, Any], prose: str | None) -> None:
+    """Write the day's episode. `prose` is None on a quiet day (no spotlight scene).
+
+    The episode is written either way: every workday ends in a chronicle, so a quiet
+    day has to leave a file behind rather than look like a tick that never ran.
+    """
     chronicle = world / "chronicles" / f"day-{day:04d}.md"
     chronicle.write_text(
-        f"# Day {day:04d}\n\n{prose}\n\n"
+        f"# Day {day:04d}\n\n{QUIET_DAY_PROSE if prose is None else prose}\n\n"
         "## Trace\n\n"
         f"brief:\n```json\n{json.dumps(brief, indent=2, sort_keys=True)}\n```\n",
         encoding="utf-8",
