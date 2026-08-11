@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 from typing import Any
 
-from breakroom import jsonio, norms
+from breakroom import jsonio, norms, worldstate
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 from breakroom.resolution.incidents import evaluate_tick, load_incident_table
@@ -34,7 +33,8 @@ QUIET_DAY_PROSE = "No incident fired today. The tower kept to itself."
 
 def tick_world(world: Path) -> None:
     state_path = world / "state" / "tower.json"
-    state = json.loads(state_path.read_text())
+    loaded = worldstate.load_world(world)
+    state = loaded.state
     day = state["day"] + 1
 
     roll_log = RollLog()
@@ -55,7 +55,7 @@ def tick_world(world: Path) -> None:
 
     # The cleanup owner is the acting character, so the cast has to be resolved before
     # any incident event is emitted. Per-incident casting is storylet work (#75/#76).
-    character = load_character(world, state["characters"][0])
+    character = loaded.characters[state["characters"][0]]
     registry = _load_registry(world)
 
     incidents: dict[str, dict[str, Any]] = {}
@@ -162,12 +162,6 @@ def _load_registry(world: Path) -> norms.Registry | None:
     if not (world / "data" / "norms.toml").exists():
         return None
     return norms.load_registry(world)
-
-
-def load_character(world: Path, character_id: str) -> dict[str, Any]:
-    character_path = world / "characters" / f"{character_id}.toml"
-    character = tomllib.loads(character_path.read_text())
-    return {"id": character_id, **character}
 
 
 def write_chronicle(world: Path, day: int, brief: dict[str, Any], prose: str | None) -> None:
