@@ -6,8 +6,17 @@ import pytest
 
 from breakroom.cli import main
 from breakroom.resolution.incidents import load_incident_table
-from breakroom.tick import QUIET_DAY_PROSE
+from breakroom.tick import QUIET_DAY_PROSE, TickError
 from breakroom.worldstate import ValidationError
+
+# Mirrors STARTER_INCIDENTS in breakroom.init: which room each starter incident points
+# at, so the missing-room test can confirm the raised error names the right pair
+# without hardcoding which incident the seeded spotlight draw happens to pick.
+STARTER_INCIDENT_ROOMS = {
+    "coffee-spill": "break-room",
+    "printer-jam": "open-office",
+    "awkward-silence": "break-room",
+}
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -57,6 +66,28 @@ def test_tick_without_an_incident_table_is_fatal(tmp_path: Path, stub_narrator) 
 
     with pytest.raises(ValidationError, match="missing file"):
         main(["tick", "--world", str(world)])
+
+
+def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
+    tmp_path: Path, stub_narrator
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+
+    tower_path = world / "state" / "tower.json"
+    tower_state = json.loads(tower_path.read_text())
+    tower_state["rooms"] = []
+    tower_path.write_text(json.dumps(tower_state))
+
+    with pytest.raises(TickError) as exc_info:
+        main(["tick", "--world", str(world)])
+
+    message = str(exc_info.value)
+    matched_incident_ids = [
+        incident_id for incident_id in STARTER_INCIDENT_ROOMS if incident_id in message
+    ]
+    assert len(matched_incident_ids) == 1
+    assert STARTER_INCIDENT_ROOMS[matched_incident_ids[0]] in message
 
 
 def test_tick_emits_one_incident_event_per_fired_incident_and_one_scene(
