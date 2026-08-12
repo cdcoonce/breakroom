@@ -212,6 +212,27 @@ def test_advance_exposure_rejects_unknown_secret(tmp_path: Path) -> None:
         advance_exposure(world, secret, seed=42, tick=1, deltas=[0.1])
 
 
+def test_advance_exposure_preserves_a_reveal_made_through_a_stale_handle(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=1.0)
+    second_handle = Secret(**stale.to_record())
+
+    revealed = maybe_reveal(
+        world, second_handle, day=1, rng=RngStream(seed=1, stream="exposure", tick=1)
+    )
+    assert revealed.state == "observable"
+
+    advanced = advance_exposure(world, stale, seed=1, tick=2, deltas=[0.1])
+
+    assert advanced.state == "observable"
+    assert advanced.revealed_by == revealed.revealed_by
+    assert advanced.knowers == revealed.knowers
+
+    stored = read_secret(world, "affair-1")
+    assert stored["state"] == "observable"
+    assert stored["revealed_by"] == revealed.revealed_by
+
+
 def test_maybe_reveal_takes_no_draw_below_threshold(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world, exposure_risk=REVEAL_THRESHOLD - 0.01)
@@ -278,6 +299,26 @@ def test_maybe_reveal_is_idempotent_once_observable(tmp_path: Path) -> None:
 
     assert again == revealed
     assert len(_read_events(world)) == 1
+
+
+def test_maybe_reveal_preserves_exposure_risk_advanced_through_a_stale_handle(
+    tmp_path: Path,
+) -> None:
+    world = _new_world(tmp_path)
+    secret = _seal(world)
+    first_handle = advance_exposure(world, secret, seed=1, tick=1, deltas=[1.0] * 4)
+    assert REVEAL_THRESHOLD <= first_handle.exposure_risk < 1.0
+
+    second_handle = advance_exposure(world, first_handle, seed=1, tick=2, deltas=[1.0] * 4)
+    assert second_handle.exposure_risk > first_handle.exposure_risk
+
+    revealed = maybe_reveal(
+        world, first_handle, day=1, rng=RngStream(seed=1, stream="exposure", tick=1)
+    )
+
+    assert revealed.exposure_risk == second_handle.exposure_risk
+    stored = read_secret(world, "affair-1")
+    assert stored["exposure_risk"] == second_handle.exposure_risk
 
 
 def test_reveal_outcome_is_reproducible_under_seed(tmp_path: Path) -> None:

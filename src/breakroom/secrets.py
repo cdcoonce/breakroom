@@ -109,12 +109,19 @@ def advance_exposure(
     if secret.id not in store:
         raise ValidationError(f"unknown secret: {secret.id}")
 
+    current = store[secret.id]
     rng = RngStream(seed=seed, stream="exposure", tick=tick)
     risk = secret.exposure_risk
     for index, delta in enumerate(deltas):
         risk = _clamp(risk + delta * rng.uniform(f"delta:{index}"))
 
-    updated = replace(secret, exposure_risk=risk)
+    updated = replace(
+        secret,
+        exposure_risk=risk,
+        state=current["state"],
+        knowers=list(current["knowers"]),
+        revealed_by=current["revealed_by"],
+    )
     store[secret.id] = updated.to_record()
     _save_store(world, store)
     return updated
@@ -144,7 +151,8 @@ def maybe_reveal(
     if secret.id not in store:
         raise ValidationError(f"unknown secret: {secret.id}")
 
-    knowers = list(secret.knowers)
+    current = store[secret.id]
+    knowers = list(current["knowers"])
     for character_id in observed_by if observed_by is not None else []:
         if character_id not in knowers:
             knowers.append(character_id)
@@ -188,6 +196,7 @@ def maybe_reveal(
         state="observable",
         knowers=knowers,
         revealed_by={"type": event["type"], "sequence": event["sequence"], "day": event["day"]},
+        exposure_risk=current["exposure_risk"],
     )
     store[secret.id] = revealed.to_record()
     _save_store(world, store)
