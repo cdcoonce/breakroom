@@ -167,7 +167,7 @@ def _load_registry(world: Path) -> norms.Registry | None:
 def load_character(world: Path, character_id: str) -> dict[str, Any]:
     character_path = world / "characters" / f"{character_id}.toml"
     character = tomllib.loads(character_path.read_text())
-    return {"id": character_id, **character}
+    return {**character, "id": character_id}
 
 
 def write_chronicle(world: Path, day: int, brief: dict[str, Any], prose: str | None) -> None:
