@@ -133,6 +133,18 @@ def test_store_record_with_wrong_state_raises_validation_error(tmp_path: Path) -
         read_secret(world, "affair-1")
 
 
+def test_store_record_with_id_mismatch_raises_validation_error(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    _seal(world)
+    store = _store_path(world)
+    record = json.loads(store.read_text(encoding="utf-8"))
+    record["affair-1"]["id"] = "affair-2"
+    store.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="does not match store key"):
+        read_secret(world, "affair-1")
+
+
 def test_read_secret_redacts_content_while_sealed(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     _seal(world)
