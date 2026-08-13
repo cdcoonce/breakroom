@@ -173,6 +173,21 @@ def test_load_incident_table_rejects_unknown_chain_trigger_target(tmp_path: Path
         load_incident_table(world)
 
 
+def test_load_incident_table_rejects_non_numeric_amount_in_direct_mode(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 0.4\n'
+        '[[incidents]]\nid = "printer-jam"\nbase_rate = 0.2\n'
+        'chain_triggers = [{ target = "coffee-spill", mode = "direct", amount = "oops" }]\n',
+    )
+
+    with pytest.raises(ValidationError, match="amount must be numeric"):
+        load_incident_table(world)
+
+
 def test_evaluate_tick_is_reproducible_under_fixed_seed(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_table(world)

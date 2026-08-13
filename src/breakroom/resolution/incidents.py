@@ -154,9 +154,13 @@ def _validate_chain_trigger(relative: Path, incident_id: str, entry: Any) -> Cha
             f"{relative}: invalid chain_trigger mode {mode!r} for {incident_id}"
         )
     amount = entry.get("amount")
-    if mode == "boost" and not isinstance(amount, (int, float)):
+    if mode == "boost" and amount is None:
         raise ValidationError(
             f"{relative}: chain_trigger mode 'boost' requires numeric amount for {incident_id}"
+        )
+    if amount is not None and not isinstance(amount, (int, float)):
+        raise ValidationError(
+            f"{relative}: chain_trigger amount must be numeric for {incident_id}"
         )
     return ChainTrigger(
         target=entry["target"],
