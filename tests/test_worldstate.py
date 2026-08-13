@@ -47,6 +47,19 @@ def test_load_world_validates_tower_fields_precisely(tmp_path: Path) -> None:
         load_world(world)
 
 
+def test_init_world_refuses_to_reinitialize_existing_world(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    state_before = json.loads((world / "state" / "tower.json").read_text())
+
+    with pytest.raises(ValidationError):
+        init_world(world, seed=99)
+
+    state_after = json.loads((world / "state" / "tower.json").read_text())
+    assert state_after["day"] == state_before["day"]
+    assert state_after == state_before
+
+
 def test_load_world_rejects_non_int_scalar_field(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)

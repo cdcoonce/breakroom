@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from breakroom import jsonio
+from breakroom.worldstate import ValidationError
 
 # `qualities` and `declared_values` MUST stay above the [stats] table header. TOML binds
 # every key after a table header into that table, so listing them below [stats] parsed
@@ -90,6 +91,9 @@ rooms = ["break-room"]
 
 
 def init_world(world: Path, seed: int) -> None:
+    if (world / "state" / "tower.json").exists():
+        raise ValidationError(f"{world}: already initialized (state/tower.json exists)")
+
     (world / "characters").mkdir(parents=True, exist_ok=True)
     (world / "chronicles").mkdir(parents=True, exist_ok=True)
     (world / "state").mkdir(parents=True, exist_ok=True)
