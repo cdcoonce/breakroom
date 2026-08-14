@@ -236,6 +236,10 @@ def _load_character(world: Path, character_id: str) -> dict[str, Any]:
     for field in ("id", "name", "model", "stats"):
         if field not in character:
             raise ValidationError(f"{relative}: missing {field}")
+    if character["id"] != character_id:
+        raise ValidationError(
+            f"{relative}: id {character['id']!r} does not match {character_id!r}"
+        )
     for stat in ("focus", "empathy", "nerve"):
         if stat not in character["stats"]:
             raise ValidationError(f"{relative}: missing stats.{stat}")
