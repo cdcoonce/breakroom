@@ -102,6 +102,30 @@ def test_snapshot_write_load_compare_is_lossless(tmp_path: Path) -> None:
     assert diff_states(loaded.state, load_snapshot(snapshot)) == {}
 
 
+def test_diff_states_reports_left_and_right_for_changed_keys() -> None:
+    left = {"morale": 50, "reputation": 50, "day": 3}
+    right = {"morale": 45, "reputation": 50, "day": 3}
+
+    assert diff_states(left, right) == {"morale": {"left": 50, "right": 45}}
+
+
+def test_diff_states_reports_one_sided_keys_with_none_fallback() -> None:
+    left = {"day": 3, "only_left": "scar"}
+    right = {"day": 3, "only_right": "new-hire"}
+
+    assert diff_states(left, right) == {
+        "only_left": {"left": "scar", "right": None},
+        "only_right": {"left": None, "right": "new-hire"},
+    }
+
+
+def test_diff_states_omits_equal_keys_while_reporting_changed_ones() -> None:
+    left = {"morale": 50, "reputation": 50, "day": 3}
+    right = {"morale": 50, "reputation": 40, "day": 3}
+
+    assert diff_states(left, right) == {"reputation": {"left": 50, "right": 40}}
+
+
 def test_independent_event_application_is_order_stable_and_pure() -> None:
     state = {
         "seed": 42,
