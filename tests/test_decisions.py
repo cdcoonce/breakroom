@@ -99,6 +99,20 @@ NON_MATCHING_NORM = Norm(
     related_values=["never lie to clients"],
 )
 
+SHIFT_COVERAGE_NORM = Norm(
+    id="cover-your-assigned-shift",
+    scope="workplace_duty",
+    description="Whoever is assigned a shift must actually staff it.",
+    severity="minor",
+    detection="assigned_shift_unattended",
+    tags=["duty"],
+    # `related_values` deliberately does NOT overlap CHARACTER's declared_values
+    # (["keep the peace", "do competent work"]) — this norm must reach
+    # candidate_norm_ids only via the fired-detector clause, so the events-passthrough
+    # effect below is isolated from the related-values-overlap clause.
+    related_values=["never lie to clients"],
+)
+
 
 def valid_model_client(payload: dict[str, Any]) -> dict[str, Any]:
     return {"choice_id": "clean_up", "rationale": "It is my mess; I will handle it."}
@@ -496,6 +510,92 @@ def test_attribution_record_includes_fallback_reason_only_on_fallback() -> None:
 
     assert isinstance(result.attribution["fallback_reason"], str)
     assert result.attribution["fallback_reason"]
+
+
+def test_context_ref_event_sequence_equals_length_of_passed_events() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+    events = [
+        {"type": "duty_attended", "character_id": CHARACTER_ID, "duty_id": "front-desk", "day": 7},
+        {"type": "location_observation", "character_id": CHARACTER_ID, "room_id": "break-room"},
+    ]
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+        events=events,
+    )
+
+    assert result.attribution["context_ref"]["event_sequence"] == len(events)
+
+
+def test_intervention_context_appears_verbatim_on_attribution() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    client = RecordingModelClient([{"choice_id": "clean_up", "rationale": "It is my mess."}])
+    intervention_context = ["manager flagged repeated spills", "coaching note: slow down"]
+
+    result = decisions.decide_incident_response(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=registry,
+        model_client=client,
+        existing_decision_count=0,
+        intervention_context=intervention_context,
+    )
+
+    assert result.attribution["intervention_context"] == intervention_context
+
+
+def test_events_passthrough_changes_which_detector_fired_norm_lands_in_candidate_norm_ids() -> None:
+    state = make_state(
+        assignments=[
+            {
+                "character_id": CHARACTER_ID,
+                "duty_id": "front-desk",
+                "day": 7,
+                "required_room": "lobby",
+            }
+        ]
+    )
+    registry = make_registry(SHIFT_COVERAGE_NORM)
+    candidate_action = {
+        "type": "location_observation",
+        "character_id": CHARACTER_ID,
+        "during_duty_id": "front-desk",
+        "day": 7,
+        "room_id": "break-room",
+    }
+
+    context_without_events = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+    )
+    context_with_events = decisions.assemble_norm_pressure_context(
+        state=state,
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=candidate_action,
+        registry=registry,
+        events=[
+            {
+                "type": "duty_attended",
+                "character_id": CHARACTER_ID,
+                "duty_id": "front-desk",
+                "day": 7,
+            }
+        ],
+    )
+
+    assert "cover-your-assigned-shift" in context_without_events["candidate_norm_ids"]
+    assert "cover-your-assigned-shift" not in context_with_events["candidate_norm_ids"]
 
 
 def test_candidate_norm_ids_on_attribution_equals_contexts_relevant_norm_ids() -> None:
