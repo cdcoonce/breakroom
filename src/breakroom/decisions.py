@@ -286,24 +286,14 @@ def decide_incident_response(
         events=events,
     )
 
-    decision_id = f"dec-{existing_decision_count + 1:06d}"
-    context_ref = {
-        "state_path": "state/tower.json",
-        "event_sequence": len(events) if events is not None else 0,
-        "context_hash": f"sha256:{_hash_json(context)}",
-    }
+    decision_id, context_ref = _build_decision_id_and_context_ref(
+        existing_decision_count=existing_decision_count, context=context, events=events
+    )
     payload = {
         "decision_type": DECISION_TYPE,
         "decision_id": decision_id,
         "tick": tick,
-        "character": {
-            "id": character_id,
-            "name": character.get("name"),
-            "model": character["model"],
-            "stats": character["stats"],
-            "qualities": character.get("qualities", {}),
-            "declared_values": character.get("declared_values", []),
-        },
+        "character": _build_character_payload(character_id=character_id, character=character),
         "context_ref": context_ref,
         "situation": {
             "incident_id": incident_id,
@@ -419,24 +409,14 @@ def decide_norm_pressure(
         events=events,
     )
 
-    decision_id = f"dec-{existing_decision_count + 1:06d}"
-    context_ref = {
-        "state_path": "state/tower.json",
-        "event_sequence": len(events) if events is not None else 0,
-        "context_hash": f"sha256:{_hash_json(context)}",
-    }
+    decision_id, context_ref = _build_decision_id_and_context_ref(
+        existing_decision_count=existing_decision_count, context=context, events=events
+    )
     payload = {
         "decision_type": NORM_PRESSURE_TYPE,
         "decision_id": decision_id,
         "tick": tick,
-        "character": {
-            "id": character_id,
-            "name": character.get("name"),
-            "model": character["model"],
-            "stats": character["stats"],
-            "qualities": character.get("qualities", {}),
-            "declared_values": character.get("declared_values", []),
-        },
+        "character": _build_character_payload(character_id=character_id, character=character),
         "context_ref": context_ref,
         "situation": {
             "candidate_action": candidate_action,
@@ -569,24 +549,14 @@ def decide_social_disclosure(
         for option in SOCIAL_DISCLOSURE_OPTIONS
     ]
 
-    decision_id = f"dec-{existing_decision_count + 1:06d}"
-    context_ref = {
-        "state_path": "state/tower.json",
-        "event_sequence": len(events) if events is not None else 0,
-        "context_hash": f"sha256:{_hash_json(context)}",
-    }
+    decision_id, context_ref = _build_decision_id_and_context_ref(
+        existing_decision_count=existing_decision_count, context=context, events=events
+    )
     payload = {
         "decision_type": SOCIAL_DISCLOSURE_TYPE,
         "decision_id": decision_id,
         "tick": tick,
-        "character": {
-            "id": character_id,
-            "name": character.get("name"),
-            "model": character["model"],
-            "stats": character["stats"],
-            "qualities": character.get("qualities", {}),
-            "declared_values": character.get("declared_values", []),
-        },
+        "character": _build_character_payload(character_id=character_id, character=character),
         "context_ref": context_ref,
         "situation": {
             "secret_id": secret_id,
@@ -622,6 +592,34 @@ def decide_social_disclosure(
         candidate_norm_ids=context["candidate_norm_ids"],
         intervention_context=intervention_context,
     )
+
+
+def _build_decision_id_and_context_ref(
+    *,
+    existing_decision_count: int,
+    context: dict[str, Any],
+    events: list[dict[str, Any]] | None,
+) -> tuple[str, dict[str, Any]]:
+    """Build the `decision_id` and `context_ref`, identical across every `decide_*` entry point."""
+    decision_id = f"dec-{existing_decision_count + 1:06d}"
+    context_ref = {
+        "state_path": "state/tower.json",
+        "event_sequence": len(events) if events is not None else 0,
+        "context_hash": f"sha256:{_hash_json(context)}",
+    }
+    return decision_id, context_ref
+
+
+def _build_character_payload(*, character_id: str, character: dict[str, Any]) -> dict[str, Any]:
+    """Build the `character` sub-payload, identical across every `decide_*` entry point."""
+    return {
+        "id": character_id,
+        "name": character.get("name"),
+        "model": character["model"],
+        "stats": character["stats"],
+        "qualities": character.get("qualities", {}),
+        "declared_values": character.get("declared_values", []),
+    }
 
 
 def _finalize_decision(
