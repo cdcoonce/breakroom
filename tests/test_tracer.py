@@ -83,14 +83,24 @@ def test_tick_appends_events_updates_state_and_writes_chronicle(
         "scene",
     ]
     assert events[0]["incident"]["id"] == "awkward-silence"
-    assert events[0]["storylet"]["id"] == "quiet-room"
     assert events[1]["incident"]["id"] == "coffee-spill"
     assert events[2]["incident"]["id"] == "printer-jam"
-    assert events[3]["incident_id"] == "awkward-silence"
+    assert events[3]["storylet_id"] == "shared-space-repair"
+    assert events[3]["character_ids"] == ["jordan-vale"]
     assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5, 6, 7, 8]
 
+    # The chronicle's prose names the incident, not the storylet (the stub narrator
+    # above and the real narrator.render_scene both work this way) — so the storylet
+    # spotlighted this tick has to be crossed against the starter incident it pairs
+    # with, rather than hardcoding which incident name shows up.
+    storylet_incident_names = {
+        "shared-space-repair": "Coffee Spill",
+        "stuck-workflow": "Printer Jam",
+    }
+    expected_incident_name = storylet_incident_names[events[3]["storylet_id"]]
     first_chronicle = (world / "chronicles" / "day-0001.md").read_text()
-    assert "Jordan Vale faced Awkward Silence." in first_chronicle
+    assert f"Jordan Vale faced {expected_incident_name}." in first_chronicle
+    assert events[3]["storylet_id"] in first_chronicle
     assert "brief:" in first_chronicle
 
 
@@ -125,3 +135,19 @@ def test_same_seed_and_starting_state_reproduce_mechanical_events(
         [event for event in event_log if event["type"] == "incident"] for event_log in event_logs
     ]
     assert mechanical_events[0] == mechanical_events[1]
+
+
+def test_tick_records_spotlight_history_in_tower_json(tmp_path: Path) -> None:
+    from breakroom import worldstate
+
+    world = tmp_path / "tower"
+    main(["init", "--world", str(world), "--seed", "42"])
+
+    pre_state = json.loads((world / "state" / "tower.json").read_text())
+    assert worldstate.ticks_since_spotlight(pre_state, "jordan-vale", 1) is None
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    state = json.loads((world / "state" / "tower.json").read_text())
+    assert state["spotlight_history"]["jordan-vale"] == 1
+    assert worldstate.ticks_since_spotlight(state, "jordan-vale", 1) == 0
