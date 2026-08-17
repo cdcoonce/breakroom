@@ -1873,3 +1873,75 @@ def test_decide_social_disclosure_works_for_every_seeded_option(world: Path) -> 
         )
         assert result.attribution["validation_status"] == "valid"
         assert result.attribution["choice_id"] == option["id"]
+
+
+# ---------------------------------------------------------------------------
+# Shared payload shape — character / response_schema / context_ref, across all three
+# decide_* entry points
+# ---------------------------------------------------------------------------
+
+
+def test_all_three_decide_entry_points_send_the_same_shared_payload_shape(world: Path) -> None:
+    seal_test_secret(world)
+    expected_character = {
+        "id": CHARACTER_ID,
+        "name": CHARACTER["name"],
+        "model": CHARACTER["model"],
+        "stats": CHARACTER["stats"],
+        "qualities": CHARACTER["qualities"],
+        "declared_values": CHARACTER["declared_values"],
+    }
+    expected_response_schema = {
+        "choice_id": "one of options[].id",
+        "rationale": "short first-person reason",
+    }
+
+    incident_client = RecordingModelClient(
+        [{"choice_id": "clean_up", "rationale": "It is my mess."}]
+    )
+    decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=incident_client,
+        existing_decision_count=0,
+    )
+
+    fallback_id = next(
+        o["id"]
+        for o in decisions.NORM_PRESSURE_OPTIONS["submit_expense_claim"]
+        if o.get("fallback")
+    )
+    norm_pressure_client = RecordingModelClient(
+        [{"choice_id": fallback_id, "rationale": "I will report it honestly."}]
+    )
+    decisions.decide_norm_pressure(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        candidate_action=make_expense_candidate_action(),
+        registry=make_registry(EXPENSE_HONESTY_NORM),
+        model_client=norm_pressure_client,
+        existing_decision_count=0,
+    )
+
+    social_disclosure_client = RecordingModelClient(
+        [{"choice_id": "withhold", "rationale": "Too risky."}]
+    )
+    decisions.decide_social_disclosure(
+        world=world,
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        disclosure_opportunity=make_disclosure_opportunity(),
+        registry=make_registry(CLIENT_CONFIDENTIALITY_NORM),
+        model_client=social_disclosure_client,
+        existing_decision_count=0,
+    )
+
+    for client in (incident_client, norm_pressure_client, social_disclosure_client):
+        assert len(client.calls) == 1
+        payload = client.calls[0]
+        assert payload["character"] == expected_character
+        assert payload["response_schema"] == expected_response_schema
+        assert payload["context_ref"]["state_path"] == "state/tower.json"
+        assert payload["context_ref"]["event_sequence"] == 0
