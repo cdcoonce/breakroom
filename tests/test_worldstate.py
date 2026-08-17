@@ -33,6 +33,28 @@ def test_load_world_validates_character_fields_precisely(tmp_path: Path) -> None
         load_world(world)
 
 
+def test_load_world_rejects_character_id_mismatched_with_filename(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "characters" / "jordan-vale.toml").write_text(
+        'id = "someone-else"\n'
+        'name = "Jordan Vale"\n'
+        'model = "claude-3-5-haiku"\n'
+        "\n"
+        "[stats]\n"
+        "focus = 2\n"
+        "empathy = 3\n"
+        "nerve = 2\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="characters/jordan-vale.toml: id 'someone-else' does not match 'jordan-vale'",
+    ):
+        load_world(world)
+
+
 def test_load_world_validates_tower_fields_precisely(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
