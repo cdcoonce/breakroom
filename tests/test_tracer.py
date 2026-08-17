@@ -24,6 +24,17 @@ def test_init_writes_starter_tower_and_character(tmp_path: Path) -> None:
     assert (world / "events.jsonl").read_text() == ""
 
 
+def test_init_uses_default_world_and_seed_when_flags_omitted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init"]) == 0
+
+    state = json.loads((tmp_path / "state" / "tower.json").read_text())
+    assert state["seed"] == 1
+
+
 def test_tick_appends_events_updates_state_and_writes_chronicle(
     tmp_path: Path, monkeypatch
 ) -> None:
