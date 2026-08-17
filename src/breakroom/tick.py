@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from breakroom import jsonio, norms
+from breakroom import jsonio, norms, worldstate
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 from breakroom.resolution.incidents import evaluate_tick, load_incident_table
@@ -96,7 +96,7 @@ def tick_world(world: Path) -> None:
             norm_violations.extend(tags["norm_violations"])
             incident_event.update(tags)
         append_event(world, incident_event)
-        state["morale"] += emitted_incident["morale_delta"]
+        state = worldstate.apply_event(state, incident_event)
 
     world_state = {
         "budget": state["budget"],
@@ -160,7 +160,10 @@ def tick_world(world: Path) -> None:
         # the day is missing from the event chronology along with its receipts.
         append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
 
-    state["day"] = day
+    if not fired_ids:
+        # No incident fired, so the `fired_ids` loop above never ran `apply_event` to
+        # advance `state["day"]`. This is the only case where that's still needed.
+        state["day"] = day
     jsonio.write_pretty_json(state_path, state)
     write_chronicle(world, day=day, brief=brief, prose=prose)
 
