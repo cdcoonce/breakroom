@@ -261,6 +261,10 @@ def _validate_record(path: Path, secret_id: str, record: Any) -> None:
     for field_name in ("id", "holder", "content"):
         if not isinstance(record[field_name], str):
             raise ValidationError(f"{path.name}: {field_name} must be a string for {secret_id}")
+    if record["id"] != secret_id:
+        raise ValidationError(
+            f"{path.name}: record id {record['id']!r} does not match store key {secret_id!r}"
+        )
     if not isinstance(record["is_true"], bool):
         raise ValidationError(f"{path.name}: is_true must be a bool for {secret_id}")
     risk = record["exposure_risk"]
