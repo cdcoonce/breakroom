@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from breakroom import decisions, secrets
+from breakroom.init import STARTER_NORMS
 from breakroom.norms import Norm, Registry
 from breakroom.worldstate import ValidationError, apply_event
 
@@ -238,13 +240,22 @@ def test_coffee_spill_options_match_the_design_doc_worked_example() -> None:
 
     assert by_id["clean_up"]["action"] == "resolve_incident"
     assert by_id["clean_up"]["payload"] == {"incident_id": "coffee-spill", "method": "clean"}
-    assert by_id["clean_up"]["candidate_norm_ids"] == ["shared-space-care"]
+    assert by_id["clean_up"]["candidate_norm_ids"] == ["clean-up-after-yourself"]
     assert by_id["clean_up"]["risk"] == "low"
 
     assert by_id["ignore"]["action"] == "skip_cleanup"
     assert by_id["ignore"]["payload"] == {"incident_id": "coffee-spill"}
-    assert by_id["ignore"]["candidate_norm_ids"] == ["shared-space-care"]
+    assert by_id["ignore"]["candidate_norm_ids"] == ["clean-up-after-yourself"]
     assert by_id["ignore"]["risk"] == "moderate"
+
+
+def test_decision_options_candidate_norm_ids_reference_only_seeded_norms() -> None:
+    seeded_norm_ids = {entry["id"] for entry in tomllib.loads(STARTER_NORMS)["norms"]}
+
+    for incident_id, options in decisions.DECISION_OPTIONS.items():
+        for option in options:
+            for norm_id in option.get("candidate_norm_ids", []):
+                assert norm_id in seeded_norm_ids, (incident_id, option["id"], norm_id)
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +594,7 @@ def test_attempted_action_matches_the_resolution_handoff_shape() -> None:
         "character_id": CHARACTER_ID,
         "action": "skip_cleanup",
         "payload": {"incident_id": "coffee-spill"},
-        "candidate_norm_ids": ["shared-space-care"],
+        "candidate_norm_ids": ["clean-up-after-yourself"],
     }
 
 
