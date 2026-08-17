@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 from breakroom.cli import main
@@ -20,7 +21,18 @@ def test_init_writes_starter_tower_and_character(tmp_path: Path) -> None:
         {"id": "break-room", "name": "Break Room", "kind": "social", "floor": 1},
         {"id": "open-office", "name": "Open Office", "kind": "work", "floor": 1},
     ]
-    assert "declared_values" in (world / "characters" / "jordan-vale.toml").read_text()
+    character = tomllib.loads(
+        (world / "characters" / "jordan-vale.toml").read_text()
+    )
+    assert character["id"] == "jordan-vale"
+    assert character["name"] == "Jordan Vale"
+    assert character["model"] == "claude-3-5-haiku"
+    assert character["stats"] == {"focus": 2, "empathy": 3, "nerve": 2}
+    assert character["qualities"] == {
+        "state:new-hire": True,
+        "trait:people-pleaser": True,
+    }
+    assert character["declared_values"] == ["keep the peace", "do competent work"]
     assert (world / "events.jsonl").read_text() == ""
 
 
