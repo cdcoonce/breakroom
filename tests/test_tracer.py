@@ -2,7 +2,10 @@ import json
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from breakroom.cli import main
+from breakroom.worldstate import ValidationError
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -89,6 +92,18 @@ def test_tick_appends_events_updates_state_and_writes_chronicle(
     first_chronicle = (world / "chronicles" / "day-0001.md").read_text()
     assert "Jordan Vale faced Awkward Silence." in first_chronicle
     assert "brief:" in first_chronicle
+
+
+def test_tick_raises_validation_error_for_incomplete_character(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    main(["init", "--world", str(world), "--seed", "42"])
+    (world / "characters" / "jordan-vale.toml").write_text(
+        'id = "jordan-vale"\nname = "Jordan Vale"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="characters/jordan-vale.toml: missing model"):
+        main(["tick", "--world", str(world)])
 
 
 def test_same_seed_and_starting_state_reproduce_mechanical_events(
