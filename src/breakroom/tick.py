@@ -32,6 +32,10 @@ STORYLETS = {
 QUIET_DAY_PROSE = "No incident fired today. The tower kept to itself."
 
 
+class TickError(ValueError):
+    pass
+
+
 def tick_world(world: Path) -> None:
     state_path = world / "state" / "tower.json"
     state = json.loads(state_path.read_text())
@@ -121,7 +125,15 @@ def tick_world(world: Path) -> None:
         spotlight_incident = incidents[spotlight_id]
         spotlight_storylet = STORYLETS[spotlight_id]
 
-        room = next(room for room in state["rooms"] if room["id"] == spotlight_incident["room"])
+        try:
+            room = next(
+                room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
+            )
+        except StopIteration:
+            raise TickError(
+                f"incident {spotlight_incident['id']!r} references room "
+                f"{spotlight_incident['room']!r}, which is missing from tower state"
+            ) from None
         brief |= {
             "room": room,
             "incident": spotlight_incident,
