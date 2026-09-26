@@ -37,11 +37,13 @@ def incident_by_id(world: Path, incident_id: str) -> dict:
 
 
 # base_rate = 1.0 on every starter incident, so all three fire on every tick regardless
-# of seed; the seed only decides which one gets the spotlight draw and thus which
+# of seed; the seed only decides which storylet gets the spotlight draw and thus which
 # incident the scene, brief, and chronicle are about. Integrity drift is a mechanic
 # rather than presentation, so it covers every fired incident's violations however the
-# draw lands. Seed 1 spotlights coffee-spill (needs_cleanup); seed 5 spotlights
-# awkward-silence (no mess to clean).
+# draw lands. Seed 1 spotlights coffee-spill (needs_cleanup); seed 5 also spotlights
+# coffee-spill — `quiet-room` (awkward-silence) is permanently ineligible because
+# awkward-silence never has a cleanup owner to fill its required slot, so seeds 1-12
+# all land on shared-space-repair (coffee-spill) or stuck-workflow (printer-jam).
 CLEANUP_SEED = 1
 NO_CLEANUP_SEED = 5
 
@@ -116,10 +118,11 @@ def test_scene_drift_covers_every_fired_incident_not_only_the_spotlight(
     tick_once(world, NO_CLEANUP_SEED)
 
     scene_event = events_of(world, "scene")[0]
-    # The spotlight landed on the one incident that leaves nothing to clean up...
-    assert scene_event["incident_id"] == "awkward-silence"
-    # ...but the other two fired all the same and were left uncleaned by the same
-    # character, so their violations must still reach the drift ledger.
+    # The spotlight landed on one violating incident (coffee-spill)...
+    assert scene_event["storylet_id"] == "shared-space-repair"
+    # ...but the other fired, violating incident (printer-jam) was left uncleaned by
+    # the same character, so its violation must still reach the drift ledger too, not
+    # only the spotlighted incident's.
     violating = sorted(
         event["incident"]["id"]
         for event in events_of(world, "incident")

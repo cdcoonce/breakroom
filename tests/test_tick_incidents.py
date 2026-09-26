@@ -208,10 +208,10 @@ def test_spotlight_is_drawn_from_a_dedicated_stream_not_the_incidents_stream(
 
     scene_event = events_of(world, "scene")[0]
     rolls = scene_event["rolls"]
-    spotlight_records = [record for record in rolls if record["stream"] == "spotlight"]
+    spotlight_records = [record for record in rolls if record["stream"] == "storylet_select"]
     assert len(spotlight_records) == 1
     assert spotlight_records[0]["primitive"] == "weighted_choice"
-    assert spotlight_records[0]["result"] == scene_event["incident_id"]
+    assert spotlight_records[0]["result"] == scene_event["storylet_id"]
 
 
 def test_same_seed_produces_the_same_incident_events_across_two_worlds(

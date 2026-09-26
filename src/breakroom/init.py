@@ -90,6 +90,74 @@ rooms = ["break-room"]
 """
 
 
+# Translates the three former tick.py STORYLETS entries into registry-loadable storylet
+# documents. One storylet per file: `load_registry` parses each `*.toml` as a whole
+# document and `_validate_storylet` requires id/title/premise/kind/eligibility/
+# participants at document root. Each declares exactly the required slot
+# (`cleanup_owner`, sourced from `incident.cleanup_owner`) and one decision point — no
+# room_kinds, quality preconditions, min_tick_gap, extra slots, or effect_hooks, so
+# eligibility turns only on the incident firing and the cleanup owner existing.
+STARTER_STORYLETS: dict[str, str] = {
+    "shared-space-repair.toml": """\
+id = "shared-space-repair"
+title = "Shared Space Repair"
+premise = "A small mess tests whether people treat shared space as shared responsibility."
+kind = "incident_response"
+
+[eligibility]
+incident_ids = ["coffee-spill"]
+
+[[participants]]
+slot = "cleanup_owner"
+source = "incident.cleanup_owner"
+required = true
+
+[[decision_points]]
+id = "shared-space-repair-response"
+decision_type = "incident_response"
+character_slot = "cleanup_owner"
+""",
+    "stuck-workflow.toml": """\
+id = "stuck-workflow"
+title = "Stuck Workflow"
+premise = "A blocked tool turns ordinary patience into visible labor."
+kind = "incident_response"
+
+[eligibility]
+incident_ids = ["printer-jam"]
+
+[[participants]]
+slot = "cleanup_owner"
+source = "incident.cleanup_owner"
+required = true
+
+[[decision_points]]
+id = "stuck-workflow-response"
+decision_type = "incident_response"
+character_slot = "cleanup_owner"
+""",
+    "quiet-room.toml": """\
+id = "quiet-room"
+title = "Quiet Room"
+premise = "A room goes quiet, and someone has to decide whether to bridge the gap."
+kind = "incident_response"
+
+[eligibility]
+incident_ids = ["awkward-silence"]
+
+[[participants]]
+slot = "cleanup_owner"
+source = "incident.cleanup_owner"
+required = true
+
+[[decision_points]]
+id = "quiet-room-response"
+decision_type = "incident_response"
+character_slot = "cleanup_owner"
+""",
+}
+
+
 def init_world(world: Path, seed: int) -> None:
     if (world / "state" / "tower.json").exists():
         raise ValidationError(f"{world}: already initialized (state/tower.json exists)")
@@ -98,6 +166,7 @@ def init_world(world: Path, seed: int) -> None:
     (world / "chronicles").mkdir(parents=True, exist_ok=True)
     (world / "state").mkdir(parents=True, exist_ok=True)
     (world / "data").mkdir(parents=True, exist_ok=True)
+    (world / "data" / "storylets").mkdir(parents=True, exist_ok=True)
 
     state = {
         "seed": seed,
@@ -117,4 +186,6 @@ def init_world(world: Path, seed: int) -> None:
     )
     (world / "data" / "norms.toml").write_text(STARTER_NORMS, encoding="utf-8")
     (world / "data" / "incidents.toml").write_text(STARTER_INCIDENTS, encoding="utf-8")
+    for filename, body in STARTER_STORYLETS.items():
+        (world / "data" / "storylets" / filename).write_text(body, encoding="utf-8")
     (world / "events.jsonl").write_text("", encoding="utf-8")

@@ -4,29 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from breakroom import jsonio, norms, worldstate
+from breakroom import jsonio, norms, storylets, worldstate
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 from breakroom.resolution.incidents import evaluate_tick, load_incident_table
-from breakroom.resolution.rng import RngStream, RollLog
-
-STORYLETS = {
-    "coffee-spill": {
-        "id": "shared-space-repair",
-        "name": "Shared Space Repair",
-        "prompt": "A small mess tests whether people treat shared space as shared responsibility.",
-    },
-    "printer-jam": {
-        "id": "stuck-workflow",
-        "name": "Stuck Workflow",
-        "prompt": "A blocked tool turns ordinary patience into visible labor.",
-    },
-    "awkward-silence": {
-        "id": "quiet-room",
-        "name": "Quiet Room",
-        "prompt": "A room goes quiet, and someone has to decide whether to bridge the gap.",
-    },
-}
+from breakroom.resolution.rng import RollLog
 
 QUIET_DAY_PROSE = "No incident fired today. The tower kept to itself."
 
@@ -61,6 +43,7 @@ def tick_world(world: Path) -> None:
     # any incident event is emitted. Per-incident casting is storylet work (#75/#76).
     character = loaded.characters[state["characters"][0]]
     registry = _load_registry(world)
+    storylet_registry = storylets.load_registry(world)
 
     incidents: dict[str, dict[str, Any]] = {}
     for incident_id in fired_ids:
@@ -83,18 +66,19 @@ def tick_world(world: Path) -> None:
     # not just the spotlight one's. Accumulated in sorted incident-id order so the
     # scene event's integrity_drift is stable for a given seed.
     norm_violations: list[dict[str, Any]] = []
+    incident_events: list[dict[str, Any]] = []
     for incident_id in fired_ids:
         emitted_incident = incidents[incident_id]
         incident_event: dict[str, Any] = {
             "type": "incident",
             "day": day,
             "incident": emitted_incident,
-            "storylet": STORYLETS[incident_id],
         }
         if registry is not None:
             tags = norms.tag_record(registry, incident_event)
             norm_violations.extend(tags["norm_violations"])
             incident_event.update(tags)
+        incident_events.append(incident_event)
         append_event(world, incident_event)
         state = worldstate.apply_event(state, incident_event)
 
@@ -118,42 +102,78 @@ def tick_world(world: Path) -> None:
     # nothing to narrate, and the chronicle renderer (#17) is specified to accept a
     # missing scene and emit a digest-only episode.
     if fired_ids:
-        spotlight_rng = RngStream(seed=state["seed"], stream="spotlight", tick=day, log=roll_log)
-        spotlight_id = spotlight_rng.weighted_choice(
-            "spotlight-draw", [(incident_id, 1.0) for incident_id in fired_ids]
+        context = storylets.EngineContext(
+            tick=day,
+            state=state,
+            characters=loaded.characters,
+            incident_events=incident_events,
         )
-        spotlight_incident = incidents[spotlight_id]
-        spotlight_storylet = STORYLETS[spotlight_id]
+        selection = storylets.select_storylet(
+            storylet_registry, context=context, seed=state["seed"], log=roll_log
+        )
+        if selection is None:
+            # An empty spotlight is a legitimate outcome: no eligible storylet does not
+            # mean no incidents fired, but the day still needs its receipts recorded.
+            append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
+        else:
+            character_ids: list[str] = []
+            for slot in selection.storylet.participants:
+                for participant_id in selection.participants.get(slot.slot, []):
+                    if participant_id not in character_ids:
+                        character_ids.append(participant_id)
 
-        try:
-            room = next(
-                room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
-            )
-        except StopIteration:
-            raise TickError(
-                f"incident {spotlight_incident['id']!r} references room "
-                f"{spotlight_incident['room']!r}, which is missing from tower state"
-            ) from None
-        brief |= {
-            "room": room,
-            "incident": spotlight_incident,
-            "storylet": spotlight_storylet,
-        }
-        prose = render_scene(brief)
-        scene_event: dict[str, Any] = {
-            "type": "scene",
-            "day": day,
-            "character_id": character["id"],
-            "incident_id": spotlight_id,
-            "brief": brief,
-            "rolls": roll_log.records,
-            "prose": prose,
-        }
-        if registry is not None:
-            scene_event["integrity_drift"] = norms.integrity_drift(
-                character, registry, norm_violations
-            )
-        append_event(world, scene_event)
+            try:
+                spotlight_character_id = next(
+                    ids[0]
+                    for slot in selection.storylet.participants
+                    if (ids := selection.participants.get(slot.slot))
+                )
+            except StopIteration:
+                raise TickError(
+                    f"storylet {selection.storylet.id!r} was selected but drew no "
+                    "participants in any slot"
+                ) from None
+            spotlight_character = loaded.characters[spotlight_character_id]
+
+            spotlight_incident_id = selection.storylet.eligibility.incident_ids[0]
+            spotlight_incident = incidents[spotlight_incident_id]
+
+            try:
+                room = next(
+                    room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
+                )
+            except StopIteration:
+                raise TickError(
+                    f"incident {spotlight_incident['id']!r} references room "
+                    f"{spotlight_incident['room']!r}, which is missing from tower state"
+                ) from None
+            brief |= {
+                "character": spotlight_character,
+                "room": room,
+                "incident": spotlight_incident,
+                "storylet": {
+                    "id": selection.storylet.id,
+                    "title": selection.storylet.title,
+                    "premise": selection.storylet.premise,
+                },
+            }
+            prose = render_scene(brief)
+            scene_event: dict[str, Any] = {
+                "type": "scene",
+                "day": day,
+                "character_id": spotlight_character_id,
+                "storylet_id": selection.storylet.id,
+                "character_ids": character_ids,
+                "brief": brief,
+                "rolls": roll_log.records,
+                "prose": prose,
+            }
+            if registry is not None:
+                scene_event["integrity_drift"] = norms.integrity_drift(
+                    spotlight_character, registry, norm_violations
+                )
+            append_event(world, scene_event)
+            state = worldstate.apply_event(state, scene_event)
     else:
         # The scene event is the only carrier of the roll log on an ordinary day, so a
         # quiet day needs its own record: otherwise the tick appends nothing at all and
