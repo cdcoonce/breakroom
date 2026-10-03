@@ -384,6 +384,35 @@ def test_credit_stealing_detected(tmp_path: Path) -> None:
     ]
 
 
+def test_credit_omission_detected_when_claim_includes_unknown_contributor(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "tower"
+    write_registry(world)
+    registry = load_registry(world)
+    decision = {
+        **CREDIT_STEALING_DECISION,
+        "actual_contributors": ["eli-ramos", "jordan-vale", "mira-okonkwo"],
+        "claimed_contributors": ["eli-ramos", "someone-fake"],
+    }
+
+    result = tag_record(registry, decision)
+
+    assert result["norm_violations"] == [
+        {
+            "norm_id": "credit-sharing",
+            "severity": "moderate",
+            "detected_by": "public_claim_omits_contributors",
+            "evidence": {
+                "character_id": "eli-ramos",
+                "work_item_id": "contract-alpha-slide-deck",
+                "omitted_contributors": ["jordan-vale", "mira-okonkwo"],
+                "audience": ["manager"],
+            },
+        }
+    ]
+
+
 def test_credit_sharing_private_note_not_flagged(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_registry(world)

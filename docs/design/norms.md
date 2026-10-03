@@ -201,9 +201,10 @@ Structured decision/event:
 }
 ```
 
-Detection path: #12 fires `public_claim_omits_contributors` when `claimed_contributors` is a strict
-subset of `actual_contributors` and the audience includes a status-relevant observer such as a
-manager, client, or all-hands room. Evidence includes omitted contributor ids.
+Detection path: #12 fires `public_claim_omits_contributors` when any contributor in
+`actual_contributors` is absent from `claimed_contributors` and the audience includes a
+status-relevant observer such as a manager, client, or all-hands room. Extra claimed names do not
+cancel an omission. Evidence includes the omitted contributor ids.
 
 No violation fires for a private rough note with no audience, because the status claim has not been
 made.
