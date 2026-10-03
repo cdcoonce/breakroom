@@ -47,6 +47,8 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         for dial, delta in event["dials"].items():
             if dial not in next_state:
                 raise ValidationError(f"unknown dial: {dial}")
+            if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+                raise ValidationError(f"dial_delta event: {dial} delta must be an int or float")
             next_state[dial] += delta
     elif event_type == "edge_delta":
         next_state["day"] = max(next_state["day"], event["day"])
