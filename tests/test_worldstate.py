@@ -69,6 +69,19 @@ def test_load_world_validates_tower_fields_precisely(tmp_path: Path) -> None:
         load_world(world)
 
 
+def test_load_world_reports_malformed_tower_json_with_resolvable_path(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    tower_path = world / "state" / "tower.json"
+    tower_path.write_text("{ malformed json", encoding="utf-8")
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_world(world)
+
+    reported_path = exc_info.value.args[0].split(":", 1)[0]
+    assert (Path.cwd() / reported_path).resolve() == tower_path.resolve()
+
+
 def test_init_world_refuses_to_reinitialize_existing_world(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
