@@ -100,17 +100,19 @@ def advance_exposure(
     """Advance exposure risk by caller-supplied per-tick deltas.
 
     Each delta is the ceiling of pressure that event applies; the realized
-    fraction is drawn from ``RngStream(stream="exposure", tick=tick)``, so risk
-    only ever moves when the caller supplies a delta, and the same
-    ``(seed, tick, deltas)`` always yields the same risk. Result is clamped to
-    ``[0.0, 1.0]``.
+    fraction is drawn from ``RngStream(stream=f"exposure:{secret.id}",
+    tick=tick)``, so draws repeat for the same seed, secret ID, tick, and draw
+    order. Resulting risk also repeats when the same deltas are applied from
+    the same starting exposure risk on the supplied Secret handle. Risk only
+    ever moves when the caller supplies a delta, and is clamped to ``[0.0,
+    1.0]``.
     """
     store = _load_store(world)
     if secret.id not in store:
         raise ValidationError(f"unknown secret: {secret.id}")
 
     current = store[secret.id]
-    rng = RngStream(seed=seed, stream="exposure", tick=tick)
+    rng = RngStream(seed=seed, stream=f"exposure:{secret.id}", tick=tick)
     risk = secret.exposure_risk
     for index, delta in enumerate(deltas):
         risk = _clamp(risk + delta * rng.uniform(f"delta:{index}"))
