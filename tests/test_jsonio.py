@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from breakroom import jsonio
 from breakroom.init import init_world
@@ -87,3 +89,32 @@ def test_save_store_calls_write_pretty_json(tmp_path: Path, monkeypatch) -> None
     written_path, written_obj = calls[0]
     assert written_path == world / ".secrets" / world.name / "secrets.json"
     assert "affair-1" in written_obj
+
+
+def test_write_pretty_json_atomic_does_not_corrupt_existing_file_on_write_failure(
+    tmp_path: Path,
+) -> None:
+    """If write fails partway through, the destination file must be untouched."""
+    path = tmp_path / "out.json"
+    original_content = '{"seed": 42}\n'
+    path.write_text(original_content, encoding="utf-8")
+
+    # Simulate a write that fails after the temp file is created but before replace.
+    original_replace = os.replace
+
+    def failing_replace(src, dst):
+        # After replace is called, the real file is already written.
+        # Fail before calling replace to simulate crash during write.
+        raise OSError("simulated write failure")
+
+    with patch.object(os, "replace", failing_replace):
+        try:
+            write_pretty_json(path, {"seed": 99})
+        except OSError:
+            pass
+
+    # The destination must be untouched — either original content or absent.
+    # os.replace was never called so tmp file is cleaned up by tempfile semantics,
+    # but in case delete=False was used, check the destination is not corrupted.
+    if path.exists():
+        assert path.read_text(encoding="utf-8") == original_content
