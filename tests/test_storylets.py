@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -381,6 +382,123 @@ def test_salience_worked_example_hot_incident_tick(tmp_path: Path) -> None:
     storylet = load_registry(world).storylets["shared-space-repair"]
 
     assert salience_score(storylet, context=_worked_example_context()) == 16.5
+
+
+def test_intervention_incident_id_matching_requires_present_target_id(
+    tmp_path: Path,
+) -> None:
+    world = _write_storylets(tmp_path / "tower", {"quiet-room": MINIMAL_STORYLET})
+    storylet = load_registry(world).storylets["quiet-room"]
+    context = EngineContext(
+        tick=12,
+        state=_tower_state(),
+        characters={"jordan-vale": {"id": "jordan-vale", "qualities": {}}},
+        character_rooms={"jordan-vale": "break-room"},
+        incident_events=[{"type": "incident", "day": 12, "incident": {"room": "break-room"}}],
+    )
+
+    without_action = salience_score(storylet, context=context)
+    absent_target = salience_score(
+        storylet, context=replace(context, director_actions=[{"id": "nudge"}])
+    )
+    none_target = salience_score(
+        storylet,
+        context=replace(context, director_actions=[{"id": "nudge", "incident_id": None}]),
+    )
+    exact_context = replace(
+        context,
+        incident_events=[
+            {
+                "type": "incident",
+                "day": 12,
+                "incident": {"id": "coffee-spill", "room": "break-room"},
+            }
+        ],
+    )
+    exact_without_action = salience_score(storylet, context=exact_context)
+    exact_target = salience_score(
+        storylet,
+        context=replace(
+            exact_context, director_actions=[{"id": "nudge", "incident_id": "coffee-spill"}]
+        ),
+    )
+
+    assert absent_target == without_action
+    assert none_target == without_action
+    assert exact_target == exact_without_action + 2.0
+
+
+def test_intervention_room_id_matching_requires_present_target_id(tmp_path: Path) -> None:
+    world = _write_storylets(tmp_path / "tower", {"quiet-room": MINIMAL_STORYLET})
+    storylet = load_registry(world).storylets["quiet-room"]
+    context = EngineContext(
+        tick=12,
+        state=_tower_state(rooms=[{"name": "Break Room", "kind": "social", "floor": 1}]),
+        characters={"jordan-vale": {"id": "jordan-vale", "qualities": {}}},
+        character_rooms={"jordan-vale": "break-room"},
+    )
+
+    without_action = salience_score(storylet, context=context)
+    absent_target = salience_score(
+        storylet, context=replace(context, director_actions=[{"id": "nudge"}])
+    )
+    none_target = salience_score(
+        storylet,
+        context=replace(context, director_actions=[{"id": "nudge", "room_id": None}]),
+    )
+    exact_context = replace(
+        context,
+        state=_tower_state(
+            rooms=[{"id": "break-room", "name": "Break Room", "kind": "social", "floor": 1}]
+        ),
+    )
+    exact_without_action = salience_score(storylet, context=exact_context)
+    exact_target = salience_score(
+        storylet,
+        context=replace(
+            exact_context, director_actions=[{"id": "nudge", "room_id": "break-room"}]
+        ),
+    )
+
+    assert absent_target == without_action
+    assert none_target == without_action
+    assert exact_target == exact_without_action + 2.0
+
+
+def test_intervention_secret_id_matching_requires_present_target_id(tmp_path: Path) -> None:
+    world = _write_storylets(tmp_path / "tower", {"quiet-room": MINIMAL_STORYLET})
+    storylet = load_registry(world).storylets["quiet-room"]
+    context = EngineContext(
+        tick=12,
+        state=_tower_state(),
+        characters={"jordan-vale": {"id": "jordan-vale", "qualities": {}}},
+        character_rooms={"jordan-vale": "break-room"},
+        secrets=[{"holder": "jordan-vale", "knowers": ["jordan-vale"]}],
+    )
+
+    without_action = salience_score(storylet, context=context)
+    absent_target = salience_score(
+        storylet, context=replace(context, director_actions=[{"id": "nudge"}])
+    )
+    none_target = salience_score(
+        storylet,
+        context=replace(context, director_actions=[{"id": "nudge", "secret_id": None}]),
+    )
+    exact_context = replace(
+        context,
+        secrets=[{"id": "budget-leak", "holder": "jordan-vale", "knowers": ["jordan-vale"]}],
+    )
+    exact_without_action = salience_score(storylet, context=exact_context)
+    exact_target = salience_score(
+        storylet,
+        context=replace(
+            exact_context, director_actions=[{"id": "nudge", "secret_id": "budget-leak"}]
+        ),
+    )
+
+    assert absent_target == without_action
+    assert none_target == without_action
+    assert exact_target == exact_without_action + 2.0
 
 
 QUIET_WORKED_EXAMPLE = """\
