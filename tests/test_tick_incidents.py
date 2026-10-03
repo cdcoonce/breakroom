@@ -1,12 +1,15 @@
 import json
 import re
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
 
 from breakroom.cli import main
+from breakroom.init import init_world
 from breakroom.resolution.incidents import load_incident_table
-from breakroom.tick import QUIET_DAY_PROSE, TickError
+from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
 from breakroom.worldstate import ValidationError
 
 # Mirrors STARTER_INCIDENTS in breakroom.init: which room each starter incident points
@@ -224,3 +227,81 @@ def test_same_seed_produces_the_same_incident_events_across_two_worlds(
 
     incident_events = [events_of(world, "incident") for world in worlds]
     assert incident_events[0] == incident_events[1]
+
+
+@pytest.mark.parametrize("declare_empty_ids", [False, True], ids=["omitted", "empty"])
+@pytest.mark.parametrize("use_command", [False, True], ids=["builtin", "local-command"])
+def test_incident_free_storylet_keeps_its_scene_and_tick_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declare_empty_ids: bool,
+    use_command: bool,
+) -> None:
+    world = tmp_path / "ambient-tower"
+    init_world(world, seed=42)
+    definitions = world / "data" / "storylets"
+    for definition in definitions.glob("*.toml"):
+        definition.unlink()
+    eligibility = "incident_ids = []\n" if declare_empty_ids else ""
+    (definitions / "office-pause.toml").write_text(
+        'id = "office-pause"\n'
+        'title = "Office Pause"\n'
+        'premise = "A shared pause gives the afternoon a different rhythm."\n'
+        'kind = "ambient"\n'
+        '\n[eligibility]\n'
+        f'{eligibility}'
+        '\n[[participants]]\n'
+        'slot = "colleague"\n'
+        'source = "incident.cleanup_owner"\n'
+        'required = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("BREAKROOM_NARRATOR_COMMAND", raising=False)
+    expected_prose = "Jordan Vale: A shared pause gives the afternoon a different rhythm."
+    if use_command:
+        # A local process verifies the real JSON transport without contacting a model.
+        command = "import sys; sys.stdout.write(sys.stdin.read())"
+        monkeypatch.setenv(
+            "BREAKROOM_NARRATOR_COMMAND", shlex.join([sys.executable, "-c", command])
+        )
+
+    tick_world(world)
+
+    scenes = events_of(world, "scene")
+    assert len(scenes) == 1
+    scene = scenes[0]
+    assert scene["storylet_id"] == "office-pause"
+    assert scene["character_id"] == "jordan-vale"
+    assert scene["character_ids"] == ["jordan-vale"]
+    assert scene["brief"]["character"]["name"] == "Jordan Vale"
+    assert scene["brief"]["storylet"] == {
+        "id": "office-pause",
+        "title": "Office Pause",
+        "premise": "A shared pause gives the afternoon a different rhythm.",
+    }
+    assert scene["brief"]["incident"] is None
+    assert scene["brief"]["room"] is None
+    if use_command:
+        assert json.loads(scene["prose"]) == scene["brief"]
+    else:
+        assert scene["prose"] == expected_prose
+    scene_json = next(
+        line
+        for line in (world / "events.jsonl").read_text().splitlines()
+        if json.loads(line)["type"] == "scene"
+    )
+    assert '"incident": null' in scene_json
+    assert '"room": null' in scene_json
+    incidents = events_of(world, "incident")
+    assert sorted(event["incident"]["id"] for event in incidents) == sorted(STARTER_INCIDENT_ROOMS)
+    saved_state = json.loads((world / "state" / "tower.json").read_text())
+    assert saved_state["day"] == 1
+    assert saved_state["morale"] == 45
+    assert saved_state["spotlight_history"] == {"jordan-vale": 1}
+    selections = [roll for roll in scene["rolls"] if roll["stream"] == "storylet_select"]
+    assert len(selections) == 1
+    assert selections[0]["result"] == "office-pause"
+    assert events_of(world, "quiet_day") == []
+    chronicle = (world / "chronicles" / "day-0001.md").read_text()
+    assert chronicle.startswith("# Day 0001\n")
+    assert scene["prose"] in chronicle
