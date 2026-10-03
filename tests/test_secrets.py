@@ -116,6 +116,8 @@ def test_seal_secret_rejects_invalid_input_without_changing_store(
 ) -> None:
     world = _new_world(tmp_path)
     _seal(world)
+    before_public = read_secret(world, "affair-1")
+    assert before_public["id"] == "affair-1"
     store = _store_path(world)
     original_bytes = store.read_bytes()
     kwargs = {"id": "new-secret", field: value}
@@ -124,15 +126,7 @@ def test_seal_secret_rejects_invalid_input_without_changing_store(
         _seal(world, **kwargs)
 
     assert store.read_bytes() == original_bytes
-    assert read_secret(world, "affair-1") == {
-        "id": "affair-1",
-        "holder": "jordan-vale",
-        "is_true": True,
-        "exposure_risk": 0.0,
-        "knowers": ["jordan-vale"],
-        "state": "sealed",
-        "revealed_by": None,
-    }
+    assert read_secret(world, "affair-1") == before_public
 
 
 def test_malformed_store_raises_validation_error(tmp_path: Path) -> None:
