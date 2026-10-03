@@ -313,6 +313,78 @@ def test_maybe_reveal_is_idempotent_once_observable(tmp_path: Path) -> None:
     assert len(_read_events(world)) == 1
 
 
+def test_maybe_reveal_uses_persisted_risk_for_threshold_and_provenance(
+    tmp_path: Path,
+) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=0.0)
+    advanced = advance_exposure(world, stale, seed=1, tick=1, deltas=[1.0] * 4)
+    assert advanced.exposure_risk > REVEAL_THRESHOLD
+
+    log = RollLog()
+    revealed = maybe_reveal(
+        world,
+        stale,
+        day=1,
+        rng=RngStream(seed=1, stream="exposure", tick=1, log=log),
+    )
+
+    assert revealed.state == "observable"
+    assert log.records[0]["purpose"] == "reveal"
+    assert log.records[0]["primitive"] == "bernoulli"
+    event = _read_events(world)[0]
+    assert event["provenance"]["exposure_risk"] == advanced.exposure_risk
+    assert revealed.exposure_risk == advanced.exposure_risk
+    assert read_secret(world, stale.id)["exposure_risk"] == advanced.exposure_risk
+
+
+def test_maybe_reveal_uses_persisted_risk_for_draw_probability(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=0.8)
+    store_path = _store_path(world)
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+    store[stale.id]["exposure_risk"] = 0.9
+    store_path.write_text(json.dumps(store), encoding="utf-8")
+
+    log = RollLog()
+    revealed = maybe_reveal(
+        world,
+        stale,
+        day=1,
+        rng=RngStream(seed=3, stream="exposure", tick=19, log=log),
+    )
+
+    assert log.records == [
+        {
+            "stream": "exposure",
+            "tick": 19,
+            "purpose": "reveal",
+            "primitive": "bernoulli",
+            "result": True,
+        }
+    ]
+    assert revealed.state == "observable"
+    assert revealed.exposure_risk == 0.9
+    assert _read_events(world)[0]["provenance"]["exposure_risk"] == 0.9
+
+
+def test_maybe_reveal_ignores_a_stale_sealed_handle_after_reveal(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=1.0)
+    revealed = maybe_reveal(
+        world, stale, day=1, rng=RngStream(seed=1, stream="exposure", tick=1)
+    )
+    events = _read_events(world)
+    assert revealed.state == "observable"
+
+    result = maybe_reveal(
+        world, stale, day=2, rng=RngStream(seed=1, stream="exposure", tick=2)
+    )
+
+    assert result is stale
+    assert _read_events(world) == events
+
+
 def test_maybe_reveal_preserves_exposure_risk_advanced_through_a_stale_handle(
     tmp_path: Path,
 ) -> None:
