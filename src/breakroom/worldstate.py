@@ -175,10 +175,18 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:
     state = copy.deepcopy(initial_state)
-    for line in events_path.read_text().splitlines():
+    for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
-        state = apply_event(state, json.loads(line))
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            checkout_root = Path(__file__).resolve().parents[2]
+            relative_path = events_path.resolve().relative_to(checkout_root, walk_up=True)
+            raise ValidationError(
+                f"{relative_path}: line {line_number}: invalid JSON"
+            ) from exc
+        state = apply_event(state, event)
     return state
 
 
