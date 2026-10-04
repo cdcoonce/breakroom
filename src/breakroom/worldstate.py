@@ -218,7 +218,12 @@ def diff_states(left: dict[str, Any], right: dict[str, Any]) -> dict[str, dict[s
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ValidationError(f"{path.name}: missing file")
-    return json.loads(path.read_text())
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        repository_root = Path(__file__).resolve().parents[2]
+        relative = path.resolve().relative_to(repository_root, walk_up=True)
+        raise ValidationError(f"{relative}: invalid JSON: {exc}") from exc
 
 
 def _validate_tower(state: dict[str, Any]) -> None:

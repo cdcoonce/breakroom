@@ -1,0 +1,27 @@
+{
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py::test_load_world_reports_malformed_tower_json_with_resolvable_path"
+  ],
+  "mutants": [
+    {
+      "label": "JSON decode error escapes",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "    try:\n        return json.loads(path.read_text())\n    except json.JSONDecodeError as exc:\n        repository_root = Path(__file__).resolve().parents[2]\n        relative = path.resolve().relative_to(repository_root, walk_up=True)\n        raise ValidationError(f\"{relative}: invalid JSON: {exc}\") from exc",
+      "replace": "    return json.loads(path.read_text())",
+      "oracle": "real"
+    },
+    {
+      "label": "Error wording changes",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "invalid JSON",
+      "replace": "malformed JSON",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The contract is the ValidationError and resolvable path; the test does not depend on parser-error wording."
+    }
+  ]
+}
