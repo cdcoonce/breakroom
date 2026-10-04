@@ -539,6 +539,90 @@ def test_incident_free_storylet_keeps_its_scene_and_tick_receipts(
     assert chronicle.startswith("# Day 0001\n")
     assert scene["prose"] in chronicle
 
+
+def _write_spotlight_incidents(world: Path, rates: dict[str, float]) -> None:
+    incident_table = world / "data" / "incidents.toml"
+    incidents = {
+        "awkward-silence": ("Awkward Silence", "break-room"),
+        "coffee-spill": ("Coffee Spill", "break-room"),
+        "printer-jam": ("Printer Jam", "open-office"),
+    }
+    incident_table.write_text(
+        "".join(
+            f'[[incidents]]\nid = "{incident_id}"\nbase_rate = {rates[incident_id]}\n'
+            f'rooms = ["{room}"]\n\n[[incidents.effects]]\n'
+            f'type = "incident_detail"\nname = "{name}"\nroom = "{room}"\n'
+            'morale_delta = -1\nnorm_tags = []\nneeds_cleanup = true\n\n'
+            for incident_id, (name, room) in incidents.items()
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_spotlight_storylet(world: Path, incident_ids: list[str]) -> None:
+    definitions = world / "data" / "storylets"
+    for definition in definitions.glob("*.toml"):
+        definition.unlink()
+    ids = ", ".join(json.dumps(incident_id) for incident_id in incident_ids)
+    (definitions / "spotlight-probe.toml").write_text(
+        'id = "spotlight-probe"\n'
+        'title = "Spotlight Probe"\n'
+        'premise = "A fired incident anchors the scene."\n'
+        'kind = "incident_response"\n\n'
+        '[eligibility]\n'
+        f'incident_ids = [{ids}]\n\n'
+        '[[participants]]\n'
+        'slot = "responder"\n'
+        'source = "incident.cleanup_owner"\n'
+        'required = true\n\n'
+        '[[decision_points]]\n'
+        'id = "spotlight-probe-choice"\n'
+        'decision_type = "incident_response"\n'
+        'character_slot = "responder"\n',
+        encoding="utf-8",
+    )
+
+
+def test_nonempty_storylet_gate_uses_a_later_fired_incident(
+    tmp_path: Path, stub_narrator
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_spotlight_incidents(
+        world,
+        {"awkward-silence": 0.0, "coffee-spill": 1.0, "printer-jam": 0.0},
+    )
+    _write_spotlight_storylet(world, ["printer-jam", "coffee-spill"])
+
+    tick_world(world)
+
+    scene = events_of(world, "scene")[0]
+    assert scene["brief"]["incident"]["id"] == "coffee-spill"
+    assert scene["brief"]["room"]["id"] == scene["brief"]["incident"]["room"]
+
+
+@pytest.mark.parametrize(
+    "incident_ids",
+    [["printer-jam", "coffee-spill"], ["coffee-spill", "printer-jam"]],
+    ids=["printer-declared-first", "coffee-declared-first"],
+)
+def test_nonempty_storylet_gate_picks_sorted_fired_match_not_unrelated_first(
+    tmp_path: Path, stub_narrator, incident_ids: list[str]
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_spotlight_incidents(
+        world,
+        {"awkward-silence": 1.0, "coffee-spill": 1.0, "printer-jam": 1.0},
+    )
+    _write_spotlight_storylet(world, incident_ids)
+
+    tick_world(world)
+
+    scene = events_of(world, "scene")[0]
+    assert scene["brief"]["incident"]["id"] == "coffee-spill"
+    assert scene["brief"]["room"]["id"] == "break-room"
+
 def _write_probe_incident(world: Path, effects: str) -> None:
     (world / "data" / "incidents.toml").write_text(
         '[[incidents]]\n'

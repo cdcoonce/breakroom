@@ -144,7 +144,10 @@ def tick_world(world: Path) -> None:
             room = None
             incident_ids = selection.storylet.eligibility.incident_ids
             if incident_ids:
-                spotlight_incident = incidents[incident_ids[0]]
+                spotlight_id = next(
+                    incident_id for incident_id in fired_ids if incident_id in incident_ids
+                )
+                spotlight_incident = incidents[spotlight_id]
                 try:
                     room = next(
                         room for room in state["rooms"] if room["id"] == spotlight_incident["room"]

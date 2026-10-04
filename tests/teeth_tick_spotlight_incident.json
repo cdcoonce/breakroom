@@ -1,0 +1,37 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py"],
+  "mutants": [
+    {
+      "label": "original first-declared incident lookup",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "spotlight_id = next(\n                    incident_id for incident_id in fired_ids if incident_id in incident_ids\n                )",
+      "replace": "spotlight_id = incident_ids[0]"
+    },
+    {
+      "label": "declaration-order match selection",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "spotlight_id = next(\n                    incident_id for incident_id in fired_ids if incident_id in incident_ids\n                )",
+      "replace": "spotlight_id = next(\n                    incident_id for incident_id in incident_ids if incident_id in fired_ids\n                )"
+    },
+    {
+      "label": "unrelated first-fired incident selection",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "spotlight_id = next(\n                    incident_id for incident_id in fired_ids if incident_id in incident_ids\n                )",
+      "replace": "spotlight_id = fired_ids[0]"
+    },
+    {
+      "label": "[control] set membership for declared gate",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Membership over the unchanged finite gate list is equivalent to membership in its set for every tick; the scope is spotlight selection and does not claim performance or mutability equivalence for external callers.",
+      "find": "incident_id in incident_ids",
+      "replace": "incident_id in set(incident_ids)"
+    }
+  ]
+}
