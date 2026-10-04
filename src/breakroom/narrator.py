@@ -26,5 +26,7 @@ def render_scene(brief: dict[str, Any]) -> str:
         return completed.stdout.strip()
 
     character = brief["character"]["name"]
+    if brief["incident"] is None:
+        return f"{character}: {brief['storylet']['premise']}"
     incident = brief["incident"]["name"]
     return f"{character} faced {incident}."
