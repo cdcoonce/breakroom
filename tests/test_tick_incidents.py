@@ -6,8 +6,8 @@ import pytest
 
 from breakroom.cli import main
 from breakroom.resolution.incidents import load_incident_table
-from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
-from breakroom.worldstate import ValidationError, load_world
+from breakroom.tick import QUIET_DAY_PROSE, TickError
+from breakroom.worldstate import ValidationError
 
 # Mirrors STARTER_INCIDENTS in breakroom.init: which room each starter incident points
 # at, so the missing-room test can confirm the raised error names the right pair
@@ -168,6 +168,9 @@ def test_a_quiet_day_never_calls_the_narrator(tmp_path: Path, monkeypatch) -> No
 
 
 def test_storylet_min_tick_gap_persists_across_real_ticks(tmp_path: Path, stub_narrator) -> None:
+    from breakroom.tick import tick_world
+    from breakroom.worldstate import load_world
+
     world = tmp_path / "tower"
     assert main(["init", "--world", str(world), "--seed", "42"]) == 0
 
