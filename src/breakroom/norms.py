@@ -168,7 +168,12 @@ def _expense_claim_overstated(
         return None
     incurred = claim.get("amount_incurred")
     reported = claim.get("amount_reported")
-    if not isinstance(incurred, (int, float)) or not isinstance(reported, (int, float)):
+    if (
+        isinstance(incurred, bool)
+        or not isinstance(incurred, (int, float))
+        or isinstance(reported, bool)
+        or not isinstance(reported, (int, float))
+    ):
         return None
     if reported <= incurred:
         return None
