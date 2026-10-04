@@ -328,12 +328,32 @@ def test_load_registry_rejects_unrelated_unknown_field(tmp_path: Path) -> None:
         load_registry(world)
 
 
-def test_expense_fraud_detected(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("amount_incurred", "amount_reported"),
+    [
+        pytest.param(42, 120, id="integers"),
+        pytest.param(42.5, 120.5, id="floats"),
+        pytest.param(0, 1, id="zero-incurred"),
+        pytest.param(-1, 0, id="zero-reported"),
+    ],
+)
+def test_expense_fraud_detected(
+    tmp_path: Path, amount_incurred: int | float, amount_reported: int | float
+) -> None:
     world = tmp_path / "tower"
     write_registry(world)
     registry = load_registry(world)
 
-    result = tag_record(registry, EXPENSE_FRAUD_DECISION)
+    record = {
+        **EXPENSE_FRAUD_DECISION,
+        "expense_claim": {
+            "amount_incurred": amount_incurred,
+            "amount_reported": amount_reported,
+            "receipt_id": "receipt-0007",
+        },
+    }
+
+    result = tag_record(registry, record)
 
     assert result["norm_tags"] == ["honesty", "money", "trust"]
     assert result["norm_violations"] == [
@@ -343,20 +363,61 @@ def test_expense_fraud_detected(tmp_path: Path) -> None:
             "detected_by": "expense_claim_overstated",
             "evidence": {
                 "character_id": "mara-chen",
-                "amount_incurred": 42,
-                "amount_reported": 120,
+                "amount_incurred": amount_incurred,
+                "amount_reported": amount_reported,
                 "receipt_id": "receipt-0007",
             },
         }
     ]
 
 
-def test_expense_claim_with_equal_amounts_not_flagged(tmp_path: Path) -> None:
+@pytest.mark.parametrize("amount", [42, 42.5], ids=["integers", "floats"])
+def test_expense_claim_with_equal_amounts_not_flagged(
+    tmp_path: Path, amount: int | float
+) -> None:
     world = tmp_path / "tower"
     write_registry(world)
     registry = load_registry(world)
 
-    result = tag_record(registry, EXPENSE_HONEST_DECISION)
+    record = {
+        **EXPENSE_HONEST_DECISION,
+        "expense_claim": {
+            "amount_incurred": amount,
+            "amount_reported": amount,
+            "receipt_id": "receipt-0008",
+        },
+    }
+
+    result = tag_record(registry, record)
+
+    assert result == {"norm_tags": [], "norm_violations": []}
+
+
+@pytest.mark.parametrize(
+    ("amount_incurred", "amount_reported"),
+    [
+        pytest.param(True, 2, id="incurred-true"),
+        pytest.param(False, 1, id="incurred-false"),
+        pytest.param(0, True, id="reported-true"),
+        pytest.param(-1, False, id="reported-false"),
+    ],
+)
+def test_expense_claim_with_boolean_amount_not_flagged(
+    tmp_path: Path, amount_incurred: int | float, amount_reported: int | float
+) -> None:
+    world = tmp_path / "tower"
+    write_registry(world)
+    registry = load_registry(world)
+    record = {
+        **EXPENSE_FRAUD_DECISION,
+        "expense_claim": {
+            "amount_incurred": amount_incurred,
+            "amount_reported": amount_reported,
+            "receipt_id": "receipt-0007",
+        },
+    }
+
+    result = tag_record(registry, record)
 
     assert result == {"norm_tags": [], "norm_violations": []}
 
@@ -378,6 +439,35 @@ def test_credit_stealing_detected(tmp_path: Path) -> None:
                 "character_id": "eli-ramos",
                 "work_item_id": "contract-alpha-slide-deck",
                 "omitted_contributors": ["jordan-vale"],
+                "audience": ["manager"],
+            },
+        }
+    ]
+
+
+def test_credit_omission_detected_when_claim_includes_unknown_contributor(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "tower"
+    write_registry(world)
+    registry = load_registry(world)
+    decision = {
+        **CREDIT_STEALING_DECISION,
+        "actual_contributors": ["eli-ramos", "jordan-vale", "mira-okonkwo"],
+        "claimed_contributors": ["eli-ramos", "someone-fake"],
+    }
+
+    result = tag_record(registry, decision)
+
+    assert result["norm_violations"] == [
+        {
+            "norm_id": "credit-sharing",
+            "severity": "moderate",
+            "detected_by": "public_claim_omits_contributors",
+            "evidence": {
+                "character_id": "eli-ramos",
+                "work_item_id": "contract-alpha-slide-deck",
+                "omitted_contributors": ["jordan-vale", "mira-okonkwo"],
                 "audience": ["manager"],
             },
         }

@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from breakroom.worldstate import ValidationError
+
 REQUIRED_ROOM_TYPE_FIELDS = ("id", "name", "capacity", "assignable", "slots", "storylet_hooks")
 
 SAME_ROOM_WEIGHT = 1.0
@@ -106,6 +108,12 @@ def _parse_room_type(path: Path, raw: dict[str, Any]) -> RoomType:
     hooks = raw["storylet_hooks"]
     if not isinstance(hooks, list) or not hooks:
         raise ConstructionError(f"{path.name}: storylet_hooks must be a non-empty list")
+    repository_root = Path(__file__).resolve().parents[2]
+    relative = path.resolve().relative_to(repository_root, walk_up=True)
+    if not isinstance(raw["id"], str) or not raw["id"]:
+        raise ValidationError(f"{relative}: id must be a non-empty string")
+    if type(raw["slots"]) is not int:
+        raise ValidationError(f"{relative}: slots must be an integer")
     return RoomType(
         id=raw["id"],
         name=raw["name"],

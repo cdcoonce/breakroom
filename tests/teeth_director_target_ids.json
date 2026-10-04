@@ -1,0 +1,37 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_storylets.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_storylets.py"],
+  "mutants": [
+    {
+      "label": "absent incident target id matches missing source id",
+      "file": "../src/breakroom/storylets.py",
+      "oracle": "real",
+      "find": "(\n                action.get(\"incident_id\") is not None\n                and action.get(\"incident_id\") in incident_ids\n            )",
+      "replace": "action.get(\"incident_id\") in incident_ids"
+    },
+    {
+      "label": "absent room target id matches missing source id",
+      "file": "../src/breakroom/storylets.py",
+      "oracle": "real",
+      "find": "(action.get(\"room_id\") is not None and action.get(\"room_id\") in room_ids)",
+      "replace": "action.get(\"room_id\") in room_ids"
+    },
+    {
+      "label": "absent secret target id matches missing source id",
+      "file": "../src/breakroom/storylets.py",
+      "oracle": "real",
+      "find": "(\n                action.get(\"secret_id\") is not None\n                and action.get(\"secret_id\") in secret_ids\n            )",
+      "replace": "action.get(\"secret_id\") in secret_ids"
+    },
+    {
+      "label": "[control] add empty set to participant pool",
+      "file": "../src/breakroom/storylets.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "For every pool, unioning the empty set preserves exactly the same members and all downstream membership results throughout this test suite; the operation changes allocation cost only. This control does not claim anything about performance-sensitive callers outside the suite.",
+      "find": "def _intervention_weight(\n    storylet: StoryletDef, context: EngineContext, pool: list[str]\n) -> float:\n    pool_set = set(pool)",
+      "replace": "def _intervention_weight(\n    storylet: StoryletDef, context: EngineContext, pool: list[str]\n) -> float:\n    pool_set = set(pool) | set()"
+    }
+  ]
+}

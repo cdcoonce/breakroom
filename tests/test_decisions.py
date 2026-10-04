@@ -316,6 +316,32 @@ def test_valid_first_response_needs_no_retry() -> None:
     assert result.attribution["rationale"] == "It is my mess."
 
 
+def test_incident_pressure_changes_context_hash() -> None:
+    state = make_state()
+    registry = make_registry(CLEANUP_NORM)
+    records = [make_incident_record(), make_incident_record()]
+    records[0]["pressure"] = ["manager-watching"]
+    records[1]["pressure"] = ["deadline-near"]
+
+    results = [
+        decisions.decide_incident_response(
+            state=state,
+            characters={CHARACTER_ID: CHARACTER},
+            incident_record=record,
+            registry=registry,
+            model_client=RecordingModelClient(
+                [{"choice_id": "clean_up", "rationale": "It is my mess."}]
+            ),
+            existing_decision_count=0,
+        )
+        for record in records
+    ]
+
+    assert results[0].attribution["context_ref"]["context_hash"] != results[1].attribution[
+        "context_ref"
+    ]["context_hash"]
+
+
 def test_malformed_first_response_triggers_exactly_one_retry_then_succeeds() -> None:
     state = make_state()
     registry = make_registry(CLEANUP_NORM)
