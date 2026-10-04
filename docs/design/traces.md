@@ -171,6 +171,18 @@ clamped to 0–100 for new receipts; finite budget movement is unbounded. Events
 compatibility. Present but malformed metadata is an error rather than a legacy fallback. World
 loading accepts finite fractional dial values and preserves them through save and replay.
 
+Each tick also records one payroll `dial_delta` as its first event, with `source = "payroll"`,
+`headcount`, and `per_character_rate`; its Budget delta is the negative rate multiplied by the
+number of character IDs in the loaded tower. The rate comes from `data/payroll.toml`, falling back
+to the packaged default when a world has no override. New worlds receive a copy of the bundled
+file. The live tick resolves the payroll receipt through the economy rulebook and applies it once
+through `move_dial` after world validation and before incident evaluation. This leaves the
+pre-tick day in place while same-day incidents and storylet selection see the debit. Replay applies
+the recorded frozen receipt through the ordinary reducer, so later payroll or economy
+configuration changes do not reinterpret it. On scene branches, tick persistence waits for
+narration to succeed; no-narration quiet and no-selected-storylet branches append payroll first
+with their normal receipts without calling the narrator.
+
 ## Incident State Effects
 
 Incident resolution retains `incident_detail` as required metadata for constructing each canonical
@@ -182,10 +194,11 @@ delta, so the effects add together.
 
 For a tick with fired incidents, canonical incident receipts are applied first in incident order,
 then supported state effects in resolver order. Those effects are applied before storylet selection,
-so selection observes the updated state. The event log persists the same receipts in that order,
-followed by the selected `scene` or `quiet_day` receipt. A scene tick does not persist any of its
-receipts until narration succeeds. Replaying the complete log from its corresponding initial state
-reproduces the saved state for both scene and no-storylet ticks.
+so selection observes the updated state. In the event log the payroll receipt precedes these
+incident and effect receipts, which retain their relative order, and the selected `scene` or
+`quiet_day` receipt follows them. A scene tick does not persist any of its receipts until narration
+succeeds. Replaying the complete log from its corresponding initial state reproduces the saved
+state for both scene and no-storylet ticks.
 
 ## Relationship Edge Persistence
 

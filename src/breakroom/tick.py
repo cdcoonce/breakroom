@@ -24,6 +24,13 @@ def tick_world(world: Path) -> None:
     state = loaded.state
     rulebook = economy.load_rulebook(world)
     day = state["day"] + 1
+    payroll = economy.resolve_dial_movement(
+        economy.payroll_receipt(
+            economy.load_payroll_rate(world), len(state["characters"]), day=day
+        ),
+        rulebook,
+    )
+    state = economy.move_dial(state, payroll, rulebook=rulebook)
 
     roll_log = RollLog()
     table = load_incident_table(world)
@@ -140,6 +147,7 @@ def tick_world(world: Path) -> None:
         if selection is None:
             # An empty spotlight is a legitimate outcome: no eligible storylet does not
             # mean no incidents fired, but the day still needs its receipts recorded.
+            append_event(world, payroll)
             _append_incident_events(world, incident_events)
             _append_state_effect_events(world, state_effect_events)
             append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
@@ -192,6 +200,7 @@ def tick_world(world: Path) -> None:
                 },
             }
             prose = render_scene(brief)
+            append_event(world, payroll)
             _append_incident_events(world, incident_events)
             scene_event: dict[str, Any] = {
                 "type": "scene",
@@ -214,6 +223,7 @@ def tick_world(world: Path) -> None:
         # The scene event is the only carrier of the roll log on an ordinary day, so a
         # quiet day needs its own record: otherwise the tick appends nothing at all and
         # the day is missing from the event chronology along with its receipts.
+        append_event(world, payroll)
         append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
 
     if not fired_ids:

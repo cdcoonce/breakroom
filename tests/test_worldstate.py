@@ -285,9 +285,12 @@ def test_replaying_persisted_quiet_day_reproduces_tick_state(
     assert all(record["result"] is False for record in quiet_events[0]["rolls"])
     assert replay_events(initial, world / "events.jsonl") == persisted_state
     assert persisted_state["day"] == initial["day"] + 1
+    assert persisted_state["budget"] == initial["budget"] - 1.0
     assert {
-        key: value for key, value in persisted_state.items() if key != "day"
-    } == {key: value for key, value in initial.items() if key != "day"}
+        key: value for key, value in persisted_state.items() if key not in {"day", "budget"}
+    } == {
+        key: value for key, value in initial.items() if key not in {"day", "budget"}
+    }
 
 
 def test_applying_older_quiet_day_does_not_move_day_backwards() -> None:
