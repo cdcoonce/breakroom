@@ -719,3 +719,122 @@ def test_draw_records_rolls_on_the_named_streams(tmp_path: Path) -> None:
     streams = [record["stream"] for record in log.records]
     assert streams[0] == "storylet_select"
     assert set(streams[1:]) == {"storylet_participant"}
+
+
+@pytest.mark.parametrize(
+    ("operator", "value_literal"),
+    [
+        ("gte", '"high"'),
+        ("gte", "true"),
+        ("lte", '"high"'),
+        ("lte", "true"),
+    ],
+)
+def test_load_registry_rejects_non_numeric_ordered_quality_values(
+    tmp_path: Path, operator: str, value_literal: str
+) -> None:
+    invalid_quality_test = (
+        f'{{ quality = "trait:tidy", operator = "{operator}", value = {value_literal} }}'
+    )
+    text = VALID_STORYLET.replace(
+        '{ quality = "trait:tidy", operator = "gte", value = 2 }',
+        invalid_quality_test,
+        1,
+    )
+    world = _write_storylets(tmp_path / "tower", {"broken": text})
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_registry(world)
+
+    message = str(exc_info.value)
+    for detail in (
+        "data/storylets/broken.toml",
+        "required_quality_any",
+        operator,
+        "shared-space-repair",
+    ):
+        assert detail in message
+
+
+@pytest.mark.parametrize(
+    ("operator", "value_literal", "expected_value"),
+    [
+        ("gte", "2", 2),
+        ("gte", "2.5", 2.5),
+        ("lte", "2", 2),
+        ("lte", "2.5", 2.5),
+    ],
+)
+def test_load_registry_accepts_numeric_ordered_quality_values(
+    tmp_path: Path, operator: str, value_literal: str, expected_value: int | float
+) -> None:
+    numeric_quality_test = (
+        f'{{ quality = "trait:tidy", operator = "{operator}", value = {value_literal} }}'
+    )
+    text = VALID_STORYLET.replace(
+        '{ quality = "trait:tidy", operator = "gte", value = 2 }',
+        numeric_quality_test,
+        1,
+    )
+    world = _write_storylets(tmp_path / "tower", {"numeric": text})
+
+    registry = load_registry(world)
+
+    quality_test = registry.storylets["shared-space-repair"].eligibility.required_quality_any[1]
+    assert quality_test.operator == operator
+    assert quality_test.value == expected_value
+
+
+@pytest.mark.parametrize(
+    ("value_literal", "expected_value"),
+    [
+        ('"tidy"', "tidy"),
+        ("true", True),
+        ("false", False),
+    ],
+)
+def test_load_registry_keeps_eq_quality_values_unrestricted(
+    tmp_path: Path, value_literal: str, expected_value: str | bool
+) -> None:
+    equality_quality_test = (
+        f'{{ quality = "trait:tidy", operator = "eq", value = {value_literal} }}'
+    )
+    text = VALID_STORYLET.replace(
+        '{ quality = "trait:tidy", operator = "gte", value = 2 }',
+        equality_quality_test,
+        1,
+    )
+    world = _write_storylets(tmp_path / "tower", {"equality": text})
+
+    registry = load_registry(world)
+
+    quality_test = registry.storylets["shared-space-repair"].eligibility.required_quality_any[1]
+    assert quality_test.operator == "eq"
+    assert quality_test.value == expected_value
+
+
+def test_load_registry_preserves_shorthand_and_value_free_present_quality_tests(
+    tmp_path: Path,
+) -> None:
+    present_quality_test = '{ quality = "trait:tidy", operator = "present" }'
+    text = VALID_STORYLET.replace(
+        '{ quality = "trait:tidy", operator = "gte", value = 2 }',
+        present_quality_test,
+        1,
+    )
+    world = _write_storylets(tmp_path / "tower", {"present": text})
+
+    registry = load_registry(world)
+
+    required = registry.storylets["shared-space-repair"].eligibility.required_quality_any
+    shorthand, explicit_present = required
+    assert (shorthand.quality, shorthand.operator, shorthand.value) == (
+        "trait:people-pleaser",
+        "present",
+        None,
+    )
+    assert (explicit_present.quality, explicit_present.operator, explicit_present.value) == (
+        "trait:tidy",
+        "present",
+        None,
+    )
