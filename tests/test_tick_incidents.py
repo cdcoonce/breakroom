@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from breakroom import storylets
 from breakroom.cli import main
 from breakroom.events import append_event
 from breakroom.init import init_world
@@ -177,6 +178,66 @@ def test_a_quiet_day_still_advances_the_day_and_writes_a_scene_free_chronicle(
     assert chronicle.startswith("# Day 0001")
     assert QUIET_DAY_PROSE in chronicle
     assert "None" not in chronicle.split("## Trace")[0]
+
+
+def test_fired_incident_without_eligible_storylet_gets_factual_chronicle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    incident_table = world / "data" / "incidents.toml"
+    text, replacements = re.subn(
+        r'(id = "(?:coffee-spill|printer-jam)"\nbase_rate = )1\.0',
+        r"\g<1>0.0",
+        incident_table.read_text(),
+    )
+    assert replacements == 2
+    incident_table.write_text(text)
+
+    selections = []
+    real_select_storylet = storylets.select_storylet
+
+    def observe_selection(*args, **kwargs):
+        selection = real_select_storylet(*args, **kwargs)
+        selections.append(selection)
+        return selection
+
+    monkeypatch.setattr(storylets, "select_storylet", observe_selection)
+    narrator_calls = []
+
+    def reject_narration(_brief):
+        narrator_calls.append(True)
+        raise AssertionError("fired incident without an eligible storylet has no scene")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", reject_narration)
+    starting_morale = json.loads((world / "state" / "tower.json").read_text())["morale"]
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    assert selections == [None]
+    assert narrator_calls == []
+    incident_events = events_of(world, "incident")
+    assert len(incident_events) == 1
+    incident = incident_events[0]["incident"]
+    assert incident["id"] == "awkward-silence"
+    assert incident["needs_cleanup"] is False
+    assert incident["cleanup_owner"] is None
+    state = json.loads((world / "state" / "tower.json").read_text())
+    assert state["day"] == 1
+    assert state["morale"] == starting_morale + incident["morale_delta"]
+
+    quiet_events = events_of(world, "quiet_day")
+    assert len(quiet_events) == 1
+    assert quiet_events[0]["day"] == 1
+    rolls = quiet_events[0]["rolls"]
+    assert len(rolls) == 3
+    assert all(record["stream"] == "incidents" and record["tick"] == 1 for record in rolls)
+    assert sorted(record["result"] for record in rolls) == [False, False, True]
+    assert events_of(world, "scene") == []
+
+    chronicle = (world / "chronicles" / "day-0001.md").read_text()
+    assert "Incidents fired today." in chronicle
+    assert QUIET_DAY_PROSE not in chronicle
 
 
 def test_a_quiet_day_records_the_rolls_that_made_it_quiet(tmp_path: Path, stub_narrator) -> None:
