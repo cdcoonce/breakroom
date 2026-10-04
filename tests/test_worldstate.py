@@ -69,6 +69,59 @@ def test_load_world_validates_tower_fields_precisely(tmp_path: Path) -> None:
         load_world(world)
 
 
+@pytest.mark.parametrize(
+    "failed_relative_path",
+    ["data/storylets/quiet-room.toml", "events.jsonl"],
+)
+def test_init_world_retries_after_late_scaffold_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_relative_path: str
+) -> None:
+    world = tmp_path / "tower"
+    failed_path = world / failed_relative_path
+    original_write_text = Path.write_text
+    failed = False
+
+    def fail_scaffold_write_once(path: Path, *args, **kwargs):
+        nonlocal failed
+        if path == failed_path and not failed:
+            failed = True
+            raise OSError("injected late scaffold failure")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_scaffold_write_once)
+
+    with pytest.raises(OSError, match="injected late scaffold failure"):
+        init_world(world, seed=42)
+
+    assert failed
+    assert not (world / "state" / "tower.json").exists()
+    assert (world / "characters" / "jordan-vale.toml").exists()
+    assert (world / "data" / "norms.toml").exists()
+    assert (world / "data" / "incidents.toml").exists()
+    storylet_directory = world / "data" / "storylets"
+    expected_storylets = {
+        "shared-space-repair.toml",
+        "stuck-workflow.toml",
+        "quiet-room.toml",
+    }
+    written_storylets = {path.name for path in storylet_directory.glob("*.toml")}
+    if failed_relative_path.endswith("quiet-room.toml"):
+        assert written_storylets == expected_storylets - {"quiet-room.toml"}
+    else:
+        assert written_storylets == expected_storylets
+
+    init_world(world, seed=42)
+
+    assert (world / "characters" / "jordan-vale.toml").exists()
+    assert (world / "data" / "norms.toml").exists()
+    assert (world / "data" / "incidents.toml").exists()
+    assert {path.name for path in storylet_directory.glob("*.toml")} == expected_storylets
+    assert (world / "events.jsonl").read_text(encoding="utf-8") == ""
+    state = json.loads((world / "state" / "tower.json").read_text(encoding="utf-8"))
+    assert state["seed"] == 42
+    assert state["day"] == 0
+
+
 def test_init_world_refuses_to_reinitialize_existing_world(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
