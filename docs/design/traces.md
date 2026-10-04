@@ -168,8 +168,8 @@ For a tick with fired incidents, canonical incident receipts are applied first i
 then supported state effects in resolver order. Those effects are applied before storylet selection,
 so selection observes the updated state. The event log persists the same receipts in that order,
 followed by the selected `scene` or `quiet_day` receipt. A scene tick does not persist any of its
-receipts until narration succeeds. Replaying the complete log from the pre-tick state reproduces the
-saved state for both scene and no-storylet ticks.
+receipts until narration succeeds. Replaying the complete log from its corresponding initial state
+reproduces the saved state for both scene and no-storylet ticks.
 
 ## View 1: Per-Character Decision Timeline
 
