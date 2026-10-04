@@ -320,7 +320,12 @@ def _quality_test(source: str, storylet_id: str, field_name: str, entry: Any) ->
         raise ValidationError(
             f"{source}: {field_name} operator {operator!r} requires value for {storylet_id}"
         )
-    return QualityTest(quality=quality, operator=operator, value=entry.get("value"))
+    value = entry.get("value")
+    if operator in ("gte", "lte") and not _is_number(value):
+        raise ValidationError(
+            f"{source}: {field_name} operator {operator!r} value must be numeric for {storylet_id}"
+        )
+    return QualityTest(quality=quality, operator=operator, value=value)
 
 
 def _check_quality_namespace(source: str, storylet_id: str, quality: str) -> None:
