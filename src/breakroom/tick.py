@@ -86,6 +86,23 @@ def tick_world(world: Path) -> None:
         incident_events.append(incident_event)
         state = worldstate.apply_event(state, incident_event)
 
+    # Resolver effects are adapted only at the tick boundary. The canonical incident
+    # receipts above remain the first state changes; declared dial/edge effects follow
+    # in resolver order and are available to storylet selection on this same tick.
+    state_effect_events: list[dict[str, Any]] = []
+    for effect in resolution.events:
+        effect_type = effect.get("type")
+        if effect_type == "incident_detail":
+            continue
+        incident_id = effect.get("incident_id")
+        if not isinstance(effect_type, str) or effect_type not in {"dial_delta", "edge_delta"}:
+            raise worldstate.ValidationError(
+                f"incident {incident_id!r} has unsupported effect type {effect_type!r}"
+            )
+        adapted_effect = {**effect, "day": day}
+        state = worldstate.apply_event(state, adapted_effect)
+        state_effect_events.append(adapted_effect)
+
     world_state = {
         "budget": state["budget"],
         "morale": state["morale"],
@@ -120,6 +137,7 @@ def tick_world(world: Path) -> None:
             # An empty spotlight is a legitimate outcome: no eligible storylet does not
             # mean no incidents fired, but the day still needs its receipts recorded.
             _append_incident_events(world, incident_events)
+            _append_state_effect_events(world, state_effect_events)
             append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
         else:
             spotlight_incident = None
@@ -182,6 +200,7 @@ def tick_world(world: Path) -> None:
                 scene_event["integrity_drift"] = norms.integrity_drift(
                     spotlight_character, registry, norm_violations
                 )
+            _append_state_effect_events(world, state_effect_events)
             append_event(world, scene_event)
             state = worldstate.apply_event(state, scene_event)
     else:
@@ -203,6 +222,11 @@ def tick_world(world: Path) -> None:
 def _append_incident_events(world: Path, incident_events: list[dict[str, Any]]) -> None:
     for incident_event in incident_events:
         append_event(world, incident_event)
+
+
+def _append_state_effect_events(world: Path, effect_events: list[dict[str, Any]]) -> None:
+    for effect_event in effect_events:
+        append_event(world, effect_event)
 
 
 def _load_registry(world: Path) -> norms.Registry | None:

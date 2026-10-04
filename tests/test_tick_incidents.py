@@ -538,3 +538,390 @@ def test_incident_free_storylet_keeps_its_scene_and_tick_receipts(
     chronicle = (world / "chronicles" / "day-0001.md").read_text()
     assert chronicle.startswith("# Day 0001\n")
     assert scene["prose"] in chronicle
+
+def _write_probe_incident(world: Path, effects: str) -> None:
+    (world / "data" / "incidents.toml").write_text(
+        '[[incidents]]\n'
+        'id = "probe-incident"\n'
+        'base_rate = 1.0\n'
+        f'{effects}\n',
+        encoding="utf-8",
+    )
+
+
+def _write_probe_storylet(
+    world: Path, storylet_id: str = "probe-response", incident_id: str = "probe-incident"
+) -> None:
+    definitions = world / "data" / "storylets"
+    for path in definitions.glob("*.toml"):
+        path.unlink()
+    (definitions / f"{storylet_id}.toml").write_text(
+        f'id = "{storylet_id}"\n'
+        f'title = "{storylet_id}"\n'
+        'premise = "A response to the probe incident."\n'
+        'kind = "incident_response"\n'
+        '\n[eligibility]\n'
+        f'incident_ids = ["{incident_id}"]\n'
+        '\n[[participants]]\n'
+        'slot = "responder"\n'
+        'source = "incident.cleanup_owner"\n'
+        'required = true\n'
+        '\n[[decision_points]]\n'
+        'id = "probe-choice"\n'
+        'decision_type = "incident_response"\n'
+        'character_slot = "responder"\n',
+        encoding="utf-8",
+    )
+
+
+def _write_competing_storylets(world: Path) -> None:
+    definitions = world / "data" / "storylets"
+    for path in definitions.glob("*.toml"):
+        path.unlink()
+    for storylet_id, bias in (("steady-response", 2.0), ("urgent-response", -2.0)):
+        (definitions / f"{storylet_id}.toml").write_text(
+            f'id = "{storylet_id}"\n'
+            f'title = "{storylet_id}"\n'
+            'premise = "A response to the probe incident."\n'
+            'kind = "incident_response"\n'
+            '\n[eligibility]\n'
+            'incident_ids = ["probe-incident"]\n'
+            '\n[[participants]]\n'
+            'slot = "responder"\n'
+            'source = "incident.cleanup_owner"\n'
+            'required = true\n'
+            '\n[[decision_points]]\n'
+            f'id = "{storylet_id}-choice"\n'
+            'decision_type = "incident_response"\n'
+            'character_slot = "responder"\n'
+            '\n[salience]\n'
+            f'storylet_bias = {bias}\n',
+            encoding="utf-8",
+        )
+
+
+def test_additive_dial_effect_changes_deterministic_storylet_selection(
+    tmp_path: Path, stub_narrator
+) -> None:
+    from breakroom.storylets import EngineContext, load_registry, select_storylet
+
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        '''[[incidents.effects]]
+type = "incident_detail"
+name = "Probe"
+room = "break-room"
+morale_delta = -1
+norm_tags = []
+needs_cleanup = true
+
+[[incidents.effects]]
+type = "dial_delta"
+dials = { morale = 1 }
+incident_id = "probe-incident"
+cascade_id = "probe-cascade"
+depth = 0
+tick = 1''',
+    )
+    _write_competing_storylets(world)
+    state_path = world / "state" / "tower.json"
+    state = json.loads(state_path.read_text())
+    state["morale"] = 25
+    initial_state = dict(state)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    loaded = worldstate.load_world(world)
+    incident_event = {
+        "type": "incident",
+        "day": 1,
+        "incident": {
+            "id": "probe-incident",
+            "name": "Probe",
+            "room": "break-room",
+            "morale_delta": -1,
+            "norm_tags": [],
+            "needs_cleanup": True,
+            "cleanup_owner": "jordan-vale",
+            "resolved": False,
+        },
+    }
+    after_detail = worldstate.apply_event(state, incident_event)
+    after_effect = worldstate.apply_event(
+        after_detail, {"type": "dial_delta", "day": 1, "dials": {"morale": 1}}
+    )
+    registry = load_registry(world)
+    before_context = EngineContext(
+        tick=1, state=after_detail, characters=loaded.characters, incident_events=[incident_event]
+    )
+    after_context = EngineContext(
+        tick=1, state=after_effect, characters=loaded.characters, incident_events=[incident_event]
+    )
+    seed = next(
+        candidate
+        for candidate in range(1000)
+        if select_storylet(registry, context=before_context, seed=candidate).storylet.id
+        != select_storylet(registry, context=after_context, seed=candidate).storylet.id
+    )
+    state["seed"] = seed
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    expected = select_storylet(registry, context=after_context, seed=seed).storylet.id
+
+    tick_world(world)
+
+    saved_state = json.loads(state_path.read_text())
+    scene = events_of(world, "scene")[0]
+    assert scene["storylet_id"] == expected
+    assert expected != select_storylet(registry, context=before_context, seed=seed).storylet.id
+    assert saved_state["morale"] == initial_state["morale"] - 1 + 1
+    assert [event["type"] for event in read_jsonl(world / "events.jsonl")] == [
+        "incident",
+        "dial_delta",
+        "scene",
+    ]
+
+
+def test_chained_edge_effects_keep_order_day_provenance_and_replay(
+    tmp_path: Path, stub_narrator
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "data" / "incidents.toml").write_text(
+        '''[[incidents]]
+id = "probe-a"
+base_rate = 1.0
+chain_triggers = [{ target = "probe-b", mode = "direct" }]
+
+[[incidents.effects]]
+type = "incident_detail"
+name = "Probe A"
+room = "break-room"
+morale_delta = 0
+norm_tags = []
+needs_cleanup = true
+
+[[incidents.effects]]
+type = "edge_delta"
+from = "jordan-vale"
+to = "mira-okonkwo"
+edges = { trust = { delta = 5, cap = 4, floor = 1 } }
+event_id = "probe-edge-1"
+day = 99
+
+[[incidents]]
+id = "probe-b"
+base_rate = 0.0
+
+[[incidents.effects]]
+type = "incident_detail"
+name = "Probe B"
+room = "break-room"
+morale_delta = 0
+norm_tags = []
+needs_cleanup = true
+
+[[incidents.effects]]
+type = "edge_delta"
+from = "jordan-vale"
+to = "mira-okonkwo"
+edges = { trust = { delta = 2, cap = 3, floor = 2 } }
+event_id = "probe-edge-2"
+day = 99
+''',
+        encoding="utf-8",
+    )
+    _write_probe_storylet(world, incident_id="probe-a")
+    state_path = world / "state" / "tower.json"
+    initial_state = json.loads(state_path.read_text())
+
+    tick_world(world)
+
+    events_path = world / "events.jsonl"
+    persisted = read_jsonl(events_path)
+    edge_events = events_of(world, "edge_delta")
+    saved_state = json.loads(state_path.read_text())
+    trust = worldstate.edge_qualities(saved_state, "jordan-vale", "mira-okonkwo")["trust"]
+    assert [event["type"] for event in persisted] == [
+        "incident", "incident", "edge_delta", "edge_delta", "scene"
+    ]
+    assert [event["incident"]["id"] for event in persisted if event["type"] == "incident"] == [
+        "probe-a",
+        "probe-b",
+    ]
+    assert [event["event_id"] for event in edge_events] == ["probe-edge-1", "probe-edge-2"]
+    assert [event["day"] for event in edge_events] == [1, 1]
+    assert [(event["tick"], event["incident_id"], event["depth"]) for event in edge_events] == [
+        (1, "probe-a", 0),
+        (1, "probe-b", 1),
+    ]
+    assert edge_events[0]["cascade_id"] == edge_events[1]["cascade_id"]
+    assert edge_events[0]["cascade_id"]
+    assert trust["value"] == 3
+    assert trust["cap"] == 3
+    assert trust["floor"] == 2
+    assert [change["event_id"] for change in trust["history"]] == ["probe-edge-1", "probe-edge-2"]
+    assert worldstate.replay_events(initial_state, events_path) == saved_state
+
+
+@pytest.mark.parametrize(
+    ("effect", "offending"),
+    [
+        ('{ type = "incident" }', "'incident'"),
+        ('{ type = "scene" }', "'scene'"),
+        ('{ type = "quiet_day" }', "'quiet_day'"),
+        ('{ type = "unsupported" }', "'unsupported'"),
+        ('{ dials = { morale = 1 } }', "None"),
+        ('{ type = ["dial_delta"] }', "['dial_delta']"),
+    ],
+    ids=["incident", "scene", "quiet-day", "unknown", "missing", "array-type"],
+)
+def test_invalid_incident_effect_type_fails_before_any_tick_writes(
+    tmp_path: Path, effect: str, offending: str
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        'effects = [{ type = "incident_detail", name = "Probe", room = "break-room", '
+        'morale_delta = 0, norm_tags = [], needs_cleanup = false }, ' + effect + "]",
+    )
+    state_path = world / "state" / "tower.json"
+    events_path = world / "events.jsonl"
+    state_before = state_path.read_bytes()
+    events_before = events_path.read_bytes() if events_path.exists() else None
+
+    with pytest.raises(ValidationError) as exc_info:
+        tick_world(world)
+
+    assert "probe-incident" in str(exc_info.value)
+    assert offending in str(exc_info.value)
+    assert state_path.read_bytes() == state_before
+    assert (events_path.read_bytes() if events_path.exists() else None) == events_before
+    assert not (world / "chronicles" / "day-0001.md").exists()
+
+
+def test_supported_edge_effect_reducer_error_happens_before_any_tick_writes(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        '''[[incidents.effects]]
+type = "incident_detail"
+name = "Probe"
+room = "break-room"
+morale_delta = 0
+norm_tags = []
+needs_cleanup = false
+
+[[incidents.effects]]
+type = "edge_delta"
+from = "jordan-vale"
+to = "mira-okonkwo"
+edges = { trust = { delta = 1 } }
+incident_id = "probe-incident"''',
+    )
+    state_path = world / "state" / "tower.json"
+    events_path = world / "events.jsonl"
+    state_before = state_path.read_bytes()
+    events_before = events_path.read_bytes() if events_path.exists() else None
+
+    with pytest.raises(ValidationError, match="edge_delta event: missing event_id"):
+        tick_world(world)
+
+    assert state_path.read_bytes() == state_before
+    assert (events_path.read_bytes() if events_path.exists() else None) == events_before
+    assert not (world / "chronicles" / "day-0001.md").exists()
+
+
+def test_fired_incident_without_storylet_persists_effect_then_quiet_day_and_replays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        '''[[incidents.effects]]
+type = "incident_detail"
+name = "Probe"
+room = "break-room"
+morale_delta = -1
+norm_tags = []
+needs_cleanup = false
+
+[[incidents.effects]]
+type = "dial_delta"
+dials = { morale = 4 }
+incident_id = "probe-incident"
+cascade_id = "probe-cascade"
+depth = 0
+tick = 1''',
+    )
+    for path in (world / "data" / "storylets").glob("*.toml"):
+        path.unlink()
+    state_path = world / "state" / "tower.json"
+    initial_state = json.loads(state_path.read_text())
+    def fail_narration(_brief: dict) -> str:
+        pytest.fail("no scene to narrate")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail_narration)
+
+    tick_world(world)
+
+    events_path = world / "events.jsonl"
+    events = read_jsonl(events_path)
+    saved_state = json.loads(state_path.read_text())
+    assert [event["type"] for event in events] == ["incident", "dial_delta", "quiet_day"]
+    assert events[-2]["day"] == events[-1]["day"] == 1
+    assert saved_state["morale"] == initial_state["morale"] + 3
+    assert worldstate.replay_events(initial_state, events_path) == saved_state
+
+
+def test_narrator_retry_persists_supported_effect_exactly_once_and_replays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        '''[[incidents.effects]]
+type = "incident_detail"
+name = "Probe"
+room = "break-room"
+morale_delta = -1
+norm_tags = []
+needs_cleanup = true
+
+[[incidents.effects]]
+type = "dial_delta"
+dials = { morale = 2 }
+incident_id = "probe-incident"
+cascade_id = "probe-cascade"
+depth = 0
+tick = 1''',
+    )
+    _write_probe_storylet(world)
+    state_path = world / "state" / "tower.json"
+    events_path = world / "events.jsonl"
+    initial_state_bytes = state_path.read_bytes()
+    initial_state = json.loads(initial_state_bytes)
+    events_before = events_path.read_bytes() if events_path.exists() else None
+
+    def fail_narration(_brief: dict) -> str:
+        raise RuntimeError("narrator unavailable")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail_narration)
+    with pytest.raises(RuntimeError, match="narrator unavailable"):
+        tick_world(world)
+    assert state_path.read_bytes() == initial_state_bytes
+    assert (events_path.read_bytes() if events_path.exists() else None) == events_before
+
+    monkeypatch.setattr("breakroom.tick.render_scene", lambda _brief: "Recovered scene.")
+    tick_world(world)
+
+    events = read_jsonl(events_path)
+    saved_state = json.loads(state_path.read_text())
+    assert [event["type"] for event in events] == ["incident", "dial_delta", "scene"]
+    assert len(events_of(world, "incident")) == 1
+    assert len(events_of(world, "dial_delta")) == 1
+    assert saved_state["morale"] == initial_state["morale"] + 1
+    assert worldstate.replay_events(initial_state, events_path) == saved_state

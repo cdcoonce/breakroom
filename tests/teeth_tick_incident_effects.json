@@ -1,0 +1,116 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_tick_incidents.py::test_additive_dial_effect_changes_deterministic_storylet_selection",
+    "tests/test_tick_incidents.py::test_chained_edge_effects_keep_order_day_provenance_and_replay",
+    "tests/test_tick_incidents.py::test_invalid_incident_effect_type_fails_before_any_tick_writes",
+    "tests/test_tick_incidents.py::test_supported_edge_effect_reducer_error_happens_before_any_tick_writes",
+    "tests/test_tick_incidents.py::test_fired_incident_without_storylet_persists_effect_then_quiet_day_and_replays",
+    "tests/test_tick_incidents.py::test_narrator_retry_persists_supported_effect_exactly_once_and_replays"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_tick_incidents.py::test_additive_dial_effect_changes_deterministic_storylet_selection",
+    "tests/test_tick_incidents.py::test_chained_edge_effects_keep_order_day_provenance_and_replay",
+    "tests/test_tick_incidents.py::test_invalid_incident_effect_type_fails_before_any_tick_writes",
+    "tests/test_tick_incidents.py::test_supported_edge_effect_reducer_error_happens_before_any_tick_writes",
+    "tests/test_tick_incidents.py::test_fired_incident_without_storylet_persists_effect_then_quiet_day_and_replays",
+    "tests/test_tick_incidents.py::test_narrator_retry_persists_supported_effect_exactly_once_and_replays"
+  ],
+  "mutants": [
+    {
+      "label": "skip applying effects before selection",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "        state = worldstate.apply_event(state, adapted_effect)\n        state_effect_events.append(adapted_effect)",
+      "replace": "        pass\n        state_effect_events.append(adapted_effect)"
+    },
+    {
+      "label": "allow unsupported lifecycle incident effects",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "effect_type not in {\"dial_delta\", \"edge_delta\"}",
+      "replace": "effect_type not in {\"dial_delta\", \"edge_delta\", \"incident\"}"
+    },
+    {
+      "label": "allow unsupported lifecycle scene effects",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "effect_type not in {\"dial_delta\", \"edge_delta\"}",
+      "replace": "effect_type not in {\"dial_delta\", \"edge_delta\", \"scene\"}"
+    },
+    {
+      "label": "allow unsupported lifecycle quiet-day effects",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "effect_type not in {\"dial_delta\", \"edge_delta\"}",
+      "replace": "effect_type not in {\"dial_delta\", \"edge_delta\", \"quiet_day\"}"
+    },
+    {
+      "label": "allow unsupported arbitrary effect strings",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "effect_type not in {\"dial_delta\", \"edge_delta\"}",
+      "replace": "effect_type not in {\"dial_delta\", \"edge_delta\", \"unsupported\"}"
+    },
+    {
+      "label": "accept a missing effect type",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "effect_type = effect.get(\"type\")",
+      "replace": "effect_type = effect.get(\"type\", \"dial_delta\")"
+    },
+    {
+      "label": "membership before non-string type guard",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "not isinstance(effect_type, str) or effect_type not in",
+      "replace": "effect_type not in"
+    },
+    {
+      "label": "keep authored day instead of adapting current day",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "adapted_effect = {**effect, \"day\": day}",
+      "replace": "adapted_effect = dict(effect)"
+    },
+    {
+      "label": "omit state effects from the no-storylet receipt path",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            _append_incident_events(world, incident_events)\n            _append_state_effect_events(world, state_effect_events)\n            append_event(world, {\"type\": \"quiet_day\",",
+      "replace": "            _append_incident_events(world, incident_events)\n            append_event(world, {\"type\": \"quiet_day\","
+    },
+    {
+      "label": "omit state effects from the selected-scene receipt path",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            _append_state_effect_events(world, state_effect_events)\n            append_event(world, scene_event)",
+      "replace": "            append_event(world, scene_event)"
+    },
+    {
+      "label": "reverse canonical incident event order",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "for incident_id in fired_ids:\n        emitted_incident = incidents[incident_id]",
+      "replace": "for incident_id in reversed(fired_ids):\n        emitted_incident = incidents[incident_id]"
+    },
+    {
+      "label": "[control] change a tick comment only",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Changing a comment leaves event application, validation, and persistence behavior unchanged; the tests should not fail on documentation-only edits.",
+      "find": "# The cleanup owner is the acting character, so the cast has to be resolved before",
+      "replace": "# The cleanup owner is the acting character; resolve the cast before"
+    }
+  ]
+}
