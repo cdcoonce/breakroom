@@ -507,6 +507,46 @@ effects = [{ type = "dial_delta", dials = { reputation = 2 } }]
     assert first.events == second.events
 
 
+def test_evaluate_tick_emits_mutual_cycle_once_per_cascade(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '''
+[[incidents]]
+id = "a-root"
+base_rate = 1.0
+effects = [{ type = "dial_delta", dials = { morale = -1 } }]
+chain_triggers = [{ target = "b-child", mode = "direct" }]
+
+[[incidents]]
+id = "b-child"
+base_rate = 0.0
+effects = [{ type = "dial_delta", dials = { reputation = -2 } }]
+chain_triggers = [{ target = "a-root", mode = "direct" }]
+''',
+    )
+    table = load_incident_table(world)
+
+    first = evaluate_tick(table, state={}, seed=19, tick=7)
+    second = evaluate_tick(table, state={}, seed=19, tick=7)
+
+    assert len(first.cascades) == 1
+    cascade = first.cascades[0]
+    assert [
+        (member["incident_id"], member["depth"], member["trigger"])
+        for member in cascade["members"]
+    ] == [("a-root", 0, "root"), ("b-child", 1, "direct")]
+    assert [
+        (event["incident_id"], event["depth"], event["dials"])
+        for event in first.events
+    ] == [
+        ("a-root", 0, {"morale": -1}),
+        ("b-child", 1, {"reputation": -2}),
+    ]
+    assert first.cascades == second.cascades
+    assert first.events == second.events
+
+
 def test_evaluate_tick_bounds_cascade_depth(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     build_chain_table(world, MAX_CASCADE_DEPTH + 3)
