@@ -9,7 +9,7 @@ import pytest
 from breakroom import storylets, worldstate
 from breakroom.cli import main
 from breakroom.events import append_event
-from breakroom.init import init_world
+from breakroom.init import STARTER_CHARACTER, init_world
 from breakroom.resolution.incidents import load_incident_table
 from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
 from breakroom.worldstate import ValidationError, load_world
@@ -190,11 +190,17 @@ def test_failed_narration_leaves_incident_receipts_for_a_successful_retry(
     assert events[0] == prior_event
     day_one_events = [event for event in events if event.get("day") == 1]
     assert [event["type"] for event in day_one_events] == [
+        "dial_delta",
         "incident",
         "incident",
         "incident",
         "scene",
     ]
+    payroll = day_one_events[0]
+    assert payroll["source"] == "payroll"
+    assert payroll["headcount"] == 1
+    assert payroll["per_character_rate"] == 1.0
+    assert payroll["dial_movement"]["dials"] == {"budget": -1.0}
     assert sorted(
         event["incident"]["id"]
         for event in day_one_events
@@ -268,6 +274,10 @@ def test_fired_incident_without_eligible_storylet_gets_factual_chronicle(
 
     assert selections == [None]
     assert narrator_calls == []
+    payroll_events = events_of(world, "dial_delta")
+    assert len(payroll_events) == 1
+    assert payroll_events[0]["source"] == "payroll"
+    assert payroll_events[0]["dial_movement"]["dials"] == {"budget": -1.0}
     incident_events = events_of(world, "incident")
     assert len(incident_events) == 1
     incident = incident_events[0]["incident"]
@@ -341,6 +351,156 @@ def test_a_quiet_day_never_calls_the_narrator(tmp_path: Path, monkeypatch) -> No
     silence_incidents(world)
 
     assert main(["tick", "--world", str(world)]) == 0
+
+
+def test_payroll_is_applied_before_incident_and_storylet_evaluation_and_replays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from breakroom import tick as tick_module
+
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    initial_state = load_world(world).state
+    evaluated_budgets = []
+    selected_budgets = []
+    real_evaluate_tick = tick_module.evaluate_tick
+    real_select_storylet = storylets.select_storylet
+
+    def observe_incident_evaluation(table, **kwargs):
+        evaluated_budgets.append(kwargs["state"]["budget"])
+        return real_evaluate_tick(table, **kwargs)
+
+    def observe_storylet_selection(registry, *, context, seed, log=None):
+        selected_budgets.append(context.state["budget"])
+        return real_select_storylet(registry, context=context, seed=seed, log=log)
+
+    monkeypatch.setattr(tick_module, "evaluate_tick", observe_incident_evaluation)
+    monkeypatch.setattr(storylets, "select_storylet", observe_storylet_selection)
+    monkeypatch.setattr("breakroom.tick.render_scene", lambda _brief: "Payroll scene.")
+
+    tick_world(world)
+
+    events_path = world / "events.jsonl"
+    events = read_jsonl(events_path)
+    saved = load_world(world).state
+    assert evaluated_budgets == [999.0]
+    assert selected_budgets == [999.0]
+    assert [event["type"] for event in events] == [
+        "dial_delta",
+        "incident",
+        "incident",
+        "incident",
+        "scene",
+    ]
+    payroll = events[0]
+    assert payroll["source"] == "payroll"
+    assert payroll["day"] == 1
+    assert payroll["headcount"] == 1
+    assert payroll["per_character_rate"] == 1.0
+    assert payroll["dial_movement"]["dials"] == {"budget": -1.0}
+    assert saved["budget"] == 999.0
+    assert saved["day"] == initial_state["day"] + 1
+    assert worldstate.replay_events(initial_state, events_path) == saved
+
+    (world / "data" / "payroll.toml").write_text(
+        "per_character_rate = 9.0\n", encoding="utf-8"
+    )
+    (world / "data" / "economy.toml").write_text(
+        '[events.incident]\ndial = "reputation"\namount_path = "incident.morale_delta"\n'
+        '[events.dial_delta]\ndials_path = "dials"\n',
+        encoding="utf-8",
+    )
+    assert worldstate.replay_events(initial_state, events_path) == saved
+
+
+def test_payroll_override_charges_every_character_on_quiet_tick_and_can_go_negative(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "data" / "payroll.toml").write_text(
+        "per_character_rate = 0.25\n", encoding="utf-8"
+    )
+    second_id = "mira-okonkwo"
+    (world / "characters" / f"{second_id}.toml").write_text(
+        STARTER_CHARACTER.replace("jordan-vale", second_id).replace(
+            "Jordan Vale", "Mira Okonkwo"
+        ),
+        encoding="utf-8",
+    )
+    state_path = world / "state" / "tower.json"
+    initial = json.loads(state_path.read_text(encoding="utf-8"))
+    initial["budget"] = 0
+    initial["characters"].append(second_id)
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    silence_incidents(world)
+
+    def fail_if_narrated(_brief: dict) -> str:
+        pytest.fail("quiet payroll tick has no scene to narrate")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail_if_narrated)
+    tick_world(world)
+
+    events_path = world / "events.jsonl"
+    events = read_jsonl(events_path)
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert [event["type"] for event in events] == ["dial_delta", "quiet_day"]
+    assert events[0]["source"] == "payroll"
+    assert events[0]["headcount"] == 2
+    assert events[0]["per_character_rate"] == 0.25
+    assert events[0]["dials"] == {"budget": -0.5}
+    assert saved["budget"] == -0.5
+    assert worldstate.replay_events(initial, events_path) == saved
+
+
+def test_invalid_payroll_override_fails_before_tick_persistence(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "data" / "payroll.toml").write_text(
+        "per_character_rate = true\n", encoding="utf-8"
+    )
+    state_path = world / "state" / "tower.json"
+    before_state = state_path.read_bytes()
+    events_path = world / "events.jsonl"
+    before_events = events_path.read_bytes()
+
+    with pytest.raises(ValidationError, match="payroll.toml"):
+        tick_world(world)
+
+    assert state_path.read_bytes() == before_state
+    assert events_path.read_bytes() == before_events
+    assert not (world / "chronicles" / "day-0001.md").exists()
+
+
+def test_payroll_multiplication_overflow_fails_before_tick_persistence(
+    tmp_path: Path
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "data" / "payroll.toml").write_text(
+        "per_character_rate = 1.7e308\n", encoding="utf-8"
+    )
+    second_id = "mira-okonkwo"
+    (world / "characters" / f"{second_id}.toml").write_text(
+        STARTER_CHARACTER.replace("jordan-vale", second_id).replace(
+            "Jordan Vale", "Mira Okonkwo"
+        ),
+        encoding="utf-8",
+    )
+    state_path = world / "state" / "tower.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["characters"].append(second_id)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before_state = state_path.read_bytes()
+    events_path = world / "events.jsonl"
+    before_events = events_path.read_bytes()
+
+    with pytest.raises(ValidationError, match="finite"):
+        tick_world(world)
+
+    assert state_path.read_bytes() == before_state
+    assert events_path.read_bytes() == before_events
+    assert not (world / "chronicles" / "day-0001.md").exists()
 
 
 def test_storylet_min_tick_gap_persists_across_real_ticks(tmp_path: Path, stub_narrator) -> None:
@@ -759,6 +919,7 @@ tick = 1''',
     assert expected != select_storylet(registry, context=before_context, seed=seed).storylet.id
     assert saved_state["morale"] == initial_state["morale"] - 1 + 1
     assert [event["type"] for event in read_jsonl(world / "events.jsonl")] == [
+        "dial_delta",
         "incident",
         "dial_delta",
         "scene",
@@ -826,7 +987,7 @@ day = 99
     saved_state = json.loads(state_path.read_text())
     trust = worldstate.edge_qualities(saved_state, "jordan-vale", "mira-okonkwo")["trust"]
     assert [event["type"] for event in persisted] == [
-        "incident", "incident", "edge_delta", "edge_delta", "scene"
+        "dial_delta", "incident", "incident", "edge_delta", "edge_delta", "scene"
     ]
     assert [event["incident"]["id"] for event in persisted if event["type"] == "incident"] == [
         "probe-a",
@@ -954,7 +1115,13 @@ tick = 1''',
     events_path = world / "events.jsonl"
     events = read_jsonl(events_path)
     saved_state = json.loads(state_path.read_text())
-    assert [event["type"] for event in events] == ["incident", "dial_delta", "quiet_day"]
+    assert [event["type"] for event in events] == [
+        "dial_delta",
+        "incident",
+        "dial_delta",
+        "quiet_day",
+    ]
+    assert events[0]["source"] == "payroll"
     assert events[-2]["day"] == events[-1]["day"] == 1
     assert saved_state["morale"] == initial_state["morale"] + 3
     assert worldstate.replay_events(initial_state, events_path) == saved_state
@@ -1004,7 +1171,13 @@ tick = 1''',
 
     events = read_jsonl(events_path)
     saved_state = json.loads(state_path.read_text())
-    assert [event["type"] for event in events] == ["incident", "dial_delta", "scene"]
+    assert [event["type"] for event in events] == [
+        "dial_delta",
+        "incident",
+        "dial_delta",
+        "scene",
+    ]
+    assert events[0]["source"] == "payroll"
     assert len(events_of(world, "incident")) == 1
     assert len(events_of(world, "dial_delta")) == 1
     assert saved_state["morale"] == initial_state["morale"] + 1
@@ -1071,18 +1244,22 @@ tick = 1""",
     events_path = world / "events.jsonl"
     events = read_jsonl(events_path)
 
-    assert first["morale"] == 47.5 and first["budget"] == 1000.5
-    assert saved["morale"] == 45.0 and saved["budget"] == 1001.0
+    assert first["morale"] == 47.5 and first["budget"] == 999.5
+    assert saved["morale"] == 45.0 and saved["budget"] == 999.0
     assert [event["type"] for event in events] == [
+        "dial_delta",
         "incident",
         "dial_delta",
         "quiet_day",
+        "dial_delta",
         "incident",
         "dial_delta",
         "quiet_day",
     ]
-    assert events[0]["dial_movement"]["dials"] == {"morale": -2.5}
-    assert events[1]["dial_movement"]["dials"] == {"budget": 0.5}
+    assert events[0]["dial_movement"]["dials"] == {"budget": -1.0}
+    assert events[1]["dial_movement"]["dials"] == {"morale": -2.5}
+    assert events[2]["dial_movement"]["dials"] == {"budget": 0.5}
+    assert events[4]["dial_movement"]["dials"] == {"budget": -1.0}
     assert worldstate.replay_events(initial, events_path) == saved
 
 
