@@ -685,3 +685,86 @@ def test_integrity_drift_no_match_when_declared_values_disjoint(tmp_path: Path) 
     drift = integrity_drift(character, registry, result["norm_violations"])
 
     assert drift == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("tags", '[{invalid = "value"}]'),
+        ("tags", '[["nested"]]'),
+        ("tags", "[42]"),
+        ("tags", "[true]"),
+        ("related_values", '[{invalid = "value"}]'),
+        ("related_values", '[["nested"]]'),
+        ("related_values", "[42]"),
+        ("related_values", "[true]"),
+    ],
+)
+def test_load_registry_rejects_non_string_list_members(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    world = tmp_path / "tower"
+    fields = {
+        "tags": value if field == "tags" else '["valid"]',
+        "related_values": value if field == "related_values" else '["valid"]',
+    }
+    write_registry(
+        world,
+        "\n".join(
+            [
+                "[[norms]]",
+                'id = "bad-list-member"',
+                'scope = "tower_policy"',
+                'description = "desc"',
+                'severity = "major"',
+                'detection = "expense_claim_overstated"',
+                f'tags = {fields["tags"]}',
+                f'related_values = {fields["related_values"]}',
+            ]
+        ),
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_registry(world)
+
+    message = str(exc_info.value)
+    assert "data/norms.toml" in message
+    assert field in message
+    assert "bad-list-member" in message
+
+
+@pytest.mark.parametrize(
+    ("tags", "related_values"),
+    [
+        ('["honesty", "trust"]', '["honesty", "fairness"]'),
+        ("[]", "[]"),
+    ],
+)
+def test_load_registry_preserves_string_and_empty_list_values(
+    tmp_path: Path, tags: str, related_values: str
+) -> None:
+    world = tmp_path / "tower"
+    write_registry(
+        world,
+        "\n".join(
+            [
+                "[[norms]]",
+                'id = "valid-list-members"',
+                'scope = "tower_policy"',
+                'description = "desc"',
+                'severity = "major"',
+                'detection = "expense_claim_overstated"',
+                f"tags = {tags}",
+                f"related_values = {related_values}",
+            ]
+        ),
+    )
+
+    registry = load_registry(world)
+
+    assert registry.norms["valid-list-members"].tags == (
+        [] if tags == "[]" else ["honesty", "trust"]
+    )
+    assert registry.norms["valid-list-members"].related_values == (
+        [] if related_values == "[]" else ["honesty", "fairness"]
+    )
