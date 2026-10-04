@@ -95,6 +95,7 @@ def seal_secret(
     except ValidationError as exc:
         raise WorldstateValidationError(str(exc)) from exc
     if id in store:
+        _validate_record(_store_path(world), id, store[id])
         raise ValidationError(f"secret already sealed: {id}")
     store[id] = record
     _save_store(world, store)
@@ -124,6 +125,7 @@ def advance_exposure(
         raise ValidationError(f"unknown secret: {secret.id}")
 
     current = store[secret.id]
+    _validate_record(_store_path(world), secret.id, current)
     rng = RngStream(seed=seed, stream=f"exposure:{secret.id}", tick=tick)
     risk = secret.exposure_risk
     for index, delta in enumerate(deltas):
@@ -164,6 +166,7 @@ def maybe_reveal(
         raise ValidationError(f"unknown secret: {secret.id}")
 
     current = store[secret.id]
+    _validate_record(_store_path(world), secret.id, current)
     if current["state"] != "sealed":
         return secret
 
@@ -230,9 +233,9 @@ def read_secret(world: Path, secret_id: str) -> dict[str, Any]:
     Observable secrets include their complete original record.
     """
     store = _load_store(world)
-    record = store.get(secret_id)
-    if record is None:
+    if secret_id not in store:
         raise ValidationError(f"unknown secret: {secret_id}")
+    record = store[secret_id]
     return _secret_from_record(_store_path(world), secret_id, record).public_view()
 
 
@@ -260,8 +263,6 @@ def _load_store(world: Path) -> dict[str, dict[str, Any]]:
         raise ValidationError(f"{path.name}: invalid JSON") from exc
     if not isinstance(data, dict):
         raise ValidationError(f"{path.name}: store must be a JSON object")
-    for secret_id, record in data.items():
-        _validate_record(path, secret_id, record)
     return data
 
 
