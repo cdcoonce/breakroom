@@ -1,0 +1,54 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_storylets.py",
+    "-k",
+    "unsupported_quality_namespaces"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_storylets.py",
+    "-k",
+    "unsupported_quality_namespaces"
+  ],
+  "mutants": [
+    {
+      "label": "re-allow only stat namespace",
+      "file": "../src/breakroom/storylets.py",
+      "find": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\"}",
+      "replace": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\", \"stat\"}",
+      "oracle": "real"
+    },
+    {
+      "label": "re-allow only rel namespace",
+      "file": "../src/breakroom/storylets.py",
+      "find": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\"}",
+      "replace": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\", \"rel\"}",
+      "oracle": "real"
+    },
+    {
+      "label": "re-allow only room namespace",
+      "file": "../src/breakroom/storylets.py",
+      "find": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\"}",
+      "replace": "VALID_QUALITY_NAMESPACES = {\"trait\", \"state\", \"skill\", \"value\", \"role\", \"room\"}",
+      "oracle": "real"
+    },
+    {
+      "label": "[control] use equivalent frozen membership guard",
+      "file": "../src/breakroom/storylets.py",
+      "find": "namespace not in VALID_QUALITY_NAMESPACES",
+      "replace": "namespace not in frozenset(VALID_QUALITY_NAMESPACES)",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Converting the same five string namespaces to a frozenset preserves membership behavior for every namespace input; no validation policy changes."
+    }
+  ]
+}

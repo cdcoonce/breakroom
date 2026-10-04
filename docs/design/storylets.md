@@ -114,16 +114,15 @@ instrument cares about decisions.
 
 Qualities are namespaced strings. Namespaces keep open authoring from becoming mush.
 
-Use these namespaces:
+Storylet quality preconditions (`required_quality_any` and `forbidden_state_any`) accept only these namespaces:
 
-- `stat:<name>`: fixed work-stat references, such as `stat:focus` or `stat:empathy`.
 - `trait:<name>`: relatively stable personality or style, such as `trait:people-pleaser`.
 - `state:<name>`: temporary condition, such as `state:burned-out` or `state:offstage`.
 - `skill:<name>`: work capability, such as `skill:client-writing`.
 - `value:<name>`: declared value, such as `value:honesty`.
 - `role:<name>`: position or duty context, such as `role:manager`.
-- `rel:<name>`: relationship quality on an edge, such as `rel:rivalry`.
-- `room:<name>`: room affordance, such as `room:break-room`.
+
+`stat:`, `rel:`, and `room:` are not accepted in storylet quality preconditions until their evaluation semantics are implemented. Work-stat values remain stored separately, relationships remain edge data, and rooms remain room data; these concepts are not implicitly mapped into character qualities. Room-type `storylet_hooks` are a separate construction mechanism and remain supported.
 
 Value ranges:
 
