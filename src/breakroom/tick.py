@@ -216,7 +216,9 @@ def tick_world(world: Path) -> None:
         # No incident fired, so the `fired_ids` loop above never ran `apply_event` to
         # advance `state["day"]`. This is the only case where that's still needed.
         state["day"] = day
-    jsonio.write_pretty_json(state_path, state)
+    jsonio.write_pretty_json(
+        state_path, worldstate._normalize_edge_state(state, context="state/tower.json")
+    )
     write_chronicle(
         world, day=day, brief=brief, prose=prose, incidents_fired=bool(fired_ids)
     )

@@ -1,0 +1,63 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py::test_json_pair_edge_encoding_keeps_delimiter_pairs_and_arbitrary_ids_distinct",
+    "tests/test_worldstate.py::test_markerless_state_reads_as_legacy_and_reducer_migrates_then_adds_distinct_pair",
+    "tests/test_worldstate.py::test_noncanonical_unicode_escape_spelling_is_rejected_consistently",
+    "tests/test_worldstate.py::test_empty_replay_normalizes_legacy_copy_without_mutating_input",
+    "tests/test_worldstate.py::test_replay_preserves_both_legacy_collision_event_pairs",
+    "tests/test_worldstate.py::test_unknown_explicit_edge_encoding_rejected_by_state_access_and_reducer",
+    "tests/test_worldstate.py::test_load_world_rejects_unknown_edge_encoding",
+    "tests/test_worldstate.py::test_new_tower_save_reload_selects_json_pair_v1",
+    "tests/test_worldstate.py::test_load_world_legacy_edges_are_read_without_rewriting_source_bytes",
+    "tests/test_worldstate.py::test_load_snapshot_preserves_legacy_bytes_and_rejects_unknown_marker",
+    "tests/test_worldstate.py::test_write_snapshot_migrates_legacy_copy_without_mutating_input",
+    "tests/test_worldstate.py::test_write_snapshot_normalizes_copy_and_round_trips_v1_edges",
+    "tests/test_tick_incidents.py::test_tick_without_edge_effect_normalizes_legacy_tower_before_save"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py",
+    "tests/test_tick_incidents.py"
+  ],
+  "mutants": [
+    {
+      "label": "[must-kill] v1 keys revert to delimiter concatenation",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    return json.dumps([from_id, to_id], ensure_ascii=True, separators=(\",\", \":\"))",
+      "replace": "    return f\"{from_id}->{to_id}\""
+    },
+    {
+      "label": "[must-kill] absent marker selects v1",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    if \"edge_key_encoding\" not in state:\n        return _LEGACY_EDGE_KEY_ENCODING",
+      "replace": "    if \"edge_key_encoding\" not in state:\n        return _EDGE_KEY_ENCODING"
+    },
+    {
+      "label": "[must-kill] bypass canonical v1 edge-key validation",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "def _validate_edge_keys(state: dict[str, Any], *, context: str) -> None:\n    if _edge_encoding(state, context=context) != _EDGE_KEY_ENCODING:",
+      "replace": "def _validate_edge_keys(state: dict[str, Any], *, context: str) -> None:\n    return\n    if _edge_encoding(state, context=context) != _EDGE_KEY_ENCODING:"
+    },
+    {
+      "label": "[control] make the canonical encoder default explicit",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Reordering these explicit encoder options preserves byte-identical canonical keys, including escaped Unicode written by normal reducer and snapshot paths.",
+      "find": "    return json.dumps([from_id, to_id], ensure_ascii=True, separators=(\",\", \":\"))",
+      "replace": "    return json.dumps([from_id, to_id], separators=(\",\", \":\"), ensure_ascii=True)"
+    }
+  ]
+}

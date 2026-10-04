@@ -1009,3 +1009,31 @@ tick = 1''',
     assert len(events_of(world, "dial_delta")) == 1
     assert saved_state["morale"] == initial_state["morale"] + 1
     assert worldstate.replay_events(initial_state, events_path) == saved_state
+
+
+def test_tick_without_edge_effect_normalizes_legacy_tower_before_save(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    state_path = world / "state" / "tower.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("edge_key_encoding")
+    state["edges"] = {"a->b->c": {}}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        "breakroom.tick.evaluate_tick",
+        lambda *args, **kwargs: SimpleNamespace(cascades=[], events=[]),
+    )
+
+    tick_world(world)
+
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert saved["edge_key_encoding"] == "json-pair-v1"
+    assert saved["edges"] == {'["a","b->c"]': {}}
+    assert worldstate.replay_events(
+        {key: value for key, value in state.items() if key != "edge_key_encoding"},
+        world / "events.jsonl",
+    ) == saved

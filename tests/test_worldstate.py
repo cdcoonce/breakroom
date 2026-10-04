@@ -233,7 +233,7 @@ def test_applying_older_quiet_day_does_not_move_day_backwards() -> None:
     state = {"day": 5, "morale": 50, "edges": {}, "spotlight_history": {}}
     quiet_day = {"type": "quiet_day", "day": 3, "rolls": [{"result": False}]}
 
-    assert apply_event(state, quiet_day) == state
+    assert apply_event(state, quiet_day) == dict(state, edge_key_encoding="json-pair-v1")
 
 
 def test_applying_unsupported_event_type_still_raises() -> None:
@@ -291,7 +291,7 @@ def test_write_snapshot_preserves_other_double_dot_names(tmp_path: Path) -> None
     snapshot = write_snapshot(world, {"day": 0}, "report..final")
 
     assert snapshot == world / "snapshots" / "report..final.json"
-    assert load_snapshot(snapshot) == {"day": 0}
+    assert load_snapshot(snapshot) == {"day": 0, "edge_key_encoding": "json-pair-v1"}
 
 
 def test_diff_states_reports_left_and_right_for_changed_keys() -> None:
@@ -1122,3 +1122,244 @@ def test_apply_event_keeps_valid_incident_morale_delta_behavior(
 
     assert result["day"] == 1
     assert result["morale"] == expected_morale
+
+
+def _edge_event(event_id: str, from_id: str, to_id: str, delta: int = 1) -> dict:
+    return {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": event_id,
+        "from": from_id,
+        "to": to_id,
+        "edges": {"trust": {"delta": delta}},
+    }
+
+
+def test_json_pair_edge_encoding_keeps_delimiter_pairs_and_arbitrary_ids_distinct() -> None:
+    state = {"day": 0, "edge_key_encoding": "json-pair-v1"}
+    first = ("a->b", 'c"雪')
+    second = ("a", 'b->c"雪')
+
+    state = apply_event(state, _edge_event("first", *first))
+    state = apply_event(state, _edge_event("second", *second, delta=2))
+
+    expected_keys = {
+        json.dumps(list(first), separators=(",", ":")),
+        json.dumps(list(second), separators=(",", ":")),
+    }
+    assert set(state["edges"]) == expected_keys
+    assert edge_qualities(state, *first)["trust"]["value"] == 1
+    assert edge_qualities(state, *second)["trust"]["value"] == 2
+    assert edge_provenance(state, *first, "trust") == ["first"]
+    assert edge_provenance(state, *second, "trust") == ["second"]
+    assert {(edge["from"], edge["to"]) for edge in character_edges(state, "a")} == {second}
+    assert {(edge["from"], edge["to"]) for edge in character_edges(state, "a->b")} == {first}
+    visible = {(edge["from"], edge["to"]) for edge in edges_at_or_above(state, "trust", 1)}
+    assert visible == {first, second}
+
+
+def test_markerless_state_reads_as_legacy_and_reducer_migrates_then_adds_distinct_pair() -> None:
+    legacy = {
+        "day": 0,
+        "edges": {
+            "a->b->c": {
+                "trust": {
+                    "value": 4,
+                    "cap": None,
+                    "floor": None,
+                    "history": [{"event_id": "legacy", "delta": 4, "cap": None, "floor": None}],
+                }
+            }
+        },
+    }
+    assert edge_qualities(legacy, "a", "b->c")["trust"]["value"] == 4
+    assert edge_qualities(legacy, "a->b", "c")["trust"]["value"] == 4
+
+    migrated = apply_event(legacy, _edge_event("new", "a->b", "c", delta=2))
+
+    assert "edge_key_encoding" not in legacy
+    assert edge_qualities(legacy, "a", "b->c")["trust"]["value"] == 4
+    assert migrated["edge_key_encoding"] == "json-pair-v1"
+    assert edge_qualities(migrated, "a", "b->c")["trust"]["value"] == 4
+    assert edge_qualities(migrated, "a->b", "c")["trust"]["value"] == 2
+    assert edge_provenance(migrated, "a", "b->c", "trust") == ["legacy"]
+    assert edge_provenance(migrated, "a->b", "c", "trust") == ["new"]
+
+
+def test_empty_replay_normalizes_legacy_copy_without_mutating_input(tmp_path: Path) -> None:
+    initial = {"day": 0, "edges": {"x->y": {}}}
+    events = tmp_path / "events.jsonl"
+    events.write_text("", encoding="utf-8")
+
+    replayed = replay_events(initial, events)
+
+    assert replayed["edge_key_encoding"] == "json-pair-v1"
+    assert replayed["edges"] == {'["x","y"]': {}}
+    assert "edge_key_encoding" not in initial
+
+
+def test_replay_preserves_both_legacy_collision_event_pairs(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps(_edge_event("first", "a->b", "c"))
+        + "\n"
+        + json.dumps(_edge_event("second", "a", "b->c", delta=2))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    replayed = replay_events({"day": 0}, events)
+
+    assert edge_qualities(replayed, "a->b", "c")["trust"]["value"] == 1
+    assert edge_qualities(replayed, "a", "b->c")["trust"]["value"] == 2
+
+
+def test_unknown_explicit_edge_encoding_rejected_by_state_access_and_reducer() -> None:
+    state = {"day": 0, "edges": {}, "edge_key_encoding": "future-v9"}
+    for read in (
+        lambda: edge_qualities(state, "a", "b"),
+        lambda: edge_provenance(state, "a", "b", "trust"),
+        lambda: character_edges(state, "a"),
+        lambda: edges_at_or_above(state, "trust", 1),
+        lambda: apply_event(state, {"type": "quiet_day", "day": 1}),
+    ):
+        with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+            read()
+
+    null_state = {"day": 0, "edges": {}, "edge_key_encoding": None}
+    for read in (
+        lambda: edge_qualities(null_state, "a", "b"),
+        lambda: edge_provenance(null_state, "a", "b", "trust"),
+        lambda: character_edges(null_state, "a"),
+        lambda: edges_at_or_above(null_state, "trust", 1),
+        lambda: apply_event(null_state, {"type": "quiet_day", "day": 1}),
+    ):
+        with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+            read()
+
+
+def test_load_world_rejects_unknown_edge_encoding(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["edge_key_encoding"] = "future-v9"
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+        load_world(world)
+
+    state["edge_key_encoding"] = None
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+        load_world(world)
+
+
+def test_new_tower_save_reload_selects_json_pair_v1(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+
+    loaded = load_world(world)
+
+    assert loaded.state["edge_key_encoding"] == "json-pair-v1"
+
+
+def test_load_world_legacy_edges_are_read_without_rewriting_source_bytes(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state.pop("edge_key_encoding")
+    state["edges"] = {"a->b->c": {"trust": {"value": 3, "history": []}}}
+    path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+
+    loaded = load_world(world)
+    assert edge_qualities(loaded.state, "a", "b->c")["trust"]["value"] == 3
+    assert path.read_bytes() == before
+
+
+def test_load_snapshot_preserves_legacy_bytes_and_rejects_unknown_marker(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.json"
+    path.write_text('{"edges":{"a->b->c":{}},"day":0}\n', encoding="utf-8")
+    before = path.read_bytes()
+    loaded = load_snapshot(path)
+    assert "edge_key_encoding" not in loaded
+    assert character_edges(loaded, "a") == [{"from": "a", "to": "b->c", "qualities": {}}]
+    assert path.read_bytes() == before
+
+    path.write_text('{"edge_key_encoding":"future-v9","day":0}\n', encoding="utf-8")
+    with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+        load_snapshot(path)
+
+    path.write_text('{"edge_key_encoding":null,"day":0}\n', encoding="utf-8")
+    with pytest.raises(ValidationError, match="edge_key_encoding: unsupported encoding"):
+        load_snapshot(path)
+
+
+def test_write_snapshot_migrates_legacy_copy_without_mutating_input(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    legacy = {"day": 0, "edges": {"a->b->c": {"trust": {"value": 2, "history": []}}}}
+    path = write_snapshot(world, legacy, "legacy")
+
+    assert "edge_key_encoding" not in legacy
+    loaded = load_snapshot(path)
+    assert loaded["edge_key_encoding"] == "json-pair-v1"
+    assert edge_qualities(loaded, "a", "b->c")["trust"]["value"] == 2
+
+
+def test_write_snapshot_normalizes_copy_and_round_trips_v1_edges(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    state = apply_event({"day": 0}, _edge_event("e1", 'quote"雪', "x->y"))
+    path = write_snapshot(world, state, "day-0001")
+
+    loaded = load_snapshot(path)
+    assert loaded["edge_key_encoding"] == "json-pair-v1"
+    assert edge_provenance(loaded, 'quote"雪', "x->y", "trust") == ["e1"]
+    assert state["edge_key_encoding"] == "json-pair-v1"
+
+
+def test_noncanonical_unicode_escape_spelling_is_rejected_consistently(tmp_path: Path) -> None:
+    escaped = json.dumps(["a", "雪"], separators=(",", ":"))
+    literal = '["a","雪"]'
+    canonical_state = {
+        "edge_key_encoding": "json-pair-v1",
+        "edges": {
+            escaped: {
+                "trust": {"value": 1, "history": [{"event_id": "canonical"}]}
+            }
+        },
+    }
+    assert escaped != literal
+    assert edge_qualities(canonical_state, "a", "雪")["trust"]["value"] == 1
+    assert edge_provenance(canonical_state, "a", "雪", "trust") == ["canonical"]
+    assert character_edges(canonical_state, "a")[0]["to"] == "雪"
+    assert edges_at_or_above(canonical_state, "trust", 1) == [
+        {"from": "a", "to": "雪", "value": 1}
+    ]
+
+    noncanonical_state = {
+        "edge_key_encoding": "json-pair-v1",
+        "edges": {literal: {"trust": {"value": 1}}},
+    }
+    for read in (
+        lambda: edge_qualities(noncanonical_state, "a", "雪"),
+        lambda: edge_provenance(noncanonical_state, "a", "雪", "trust"),
+        lambda: character_edges(noncanonical_state, "a"),
+        lambda: edges_at_or_above(noncanonical_state, "trust", 1),
+    ):
+        with pytest.raises(ValidationError, match="canonical string pair"):
+            read()
+
+    path = tmp_path / "noncanonical.json"
+    path.write_text(json.dumps(noncanonical_state), encoding="utf-8")
+    with pytest.raises(ValidationError, match="canonical string pair"):
+        load_snapshot(path)
+
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    tower_path = world / "state" / "tower.json"
+    tower = json.loads(tower_path.read_text(encoding="utf-8"))
+    tower["edges"] = noncanonical_state["edges"]
+    tower_path.write_text(json.dumps(tower), encoding="utf-8")
+    with pytest.raises(ValidationError, match="canonical string pair"):
+        load_world(world)

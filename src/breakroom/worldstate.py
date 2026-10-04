@@ -15,6 +15,8 @@ class ValidationError(ValueError):
 
 
 _CHARACTER_QUALITY_NAMESPACES = {"trait", "state", "skill", "value", "role"}
+_LEGACY_EDGE_KEY_ENCODING = "legacy-v0"
+_EDGE_KEY_ENCODING = "json-pair-v1"
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ def load_world(world: Path) -> World:
 
 
 def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
-    next_state = copy.deepcopy(state)
+    next_state = _normalize_edge_state(state, context="reducer state")
     event_type = event["type"]
     if event_type == "incident":
         incident = event.get("incident")
@@ -67,7 +69,8 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
 
 
 def edge_qualities(state: dict[str, Any], from_id: str, to_id: str) -> dict[str, Any]:
-    pair = state.get("edges", {}).get(_pair_key(from_id, to_id), {})
+    _validate_edge_keys(state, context="edge_qualities state")
+    pair = state.get("edges", {}).get(_pair_key_for_state(state, from_id, to_id), {})
     return copy.deepcopy(pair)
 
 
@@ -77,26 +80,31 @@ def character_qualities(characters: dict[str, dict[str, Any]], character_id: str
 
 
 def character_edges(state: dict[str, Any], character_id: str) -> list[dict[str, Any]]:
+    _validate_edge_keys(state, context="character_edges state")
     results = []
     for pair_key, qualities in state.get("edges", {}).items():
-        from_id, to_id = _split_pair_key(pair_key)
+        from_id, to_id = _split_pair_key_for_state(state, pair_key, context="character_edges state")
         if from_id == character_id or to_id == character_id:
             results.append({"from": from_id, "to": to_id, "qualities": copy.deepcopy(qualities)})
     return results
 
 
 def edges_at_or_above(state: dict[str, Any], quality: str, threshold: int) -> list[dict[str, Any]]:
+    _validate_edge_keys(state, context="edges_at_or_above state")
     results = []
     for pair_key, qualities in state.get("edges", {}).items():
         entry = qualities.get(quality)
         if entry is not None and entry["value"] >= threshold:
-            from_id, to_id = _split_pair_key(pair_key)
+            from_id, to_id = _split_pair_key_for_state(
+                state, pair_key, context="edges_at_or_above state"
+            )
             results.append({"from": from_id, "to": to_id, "value": entry["value"]})
     return results
 
 
 def edge_provenance(state: dict[str, Any], from_id: str, to_id: str, quality: str) -> list[str]:
-    pair = state.get("edges", {}).get(_pair_key(from_id, to_id), {})
+    _validate_edge_keys(state, context="edge_provenance state")
+    pair = state.get("edges", {}).get(_pair_key_for_state(state, from_id, to_id), {})
     entry = pair.get(quality)
     if entry is None:
         return []
@@ -110,13 +118,86 @@ def ticks_since_spotlight(state: dict[str, Any], character_id: str, current_day:
     return current_day - last_day
 
 
+def _edge_encoding(state: dict[str, Any], *, context: str) -> str:
+    if "edge_key_encoding" not in state:
+        return _LEGACY_EDGE_KEY_ENCODING
+    encoding = state["edge_key_encoding"]
+    if encoding != _EDGE_KEY_ENCODING:
+        raise ValidationError(
+            f"{context}: edge_key_encoding: unsupported encoding {encoding!r}"
+        )
+    return encoding
+
+
 def _pair_key(from_id: str, to_id: str) -> str:
-    return f"{from_id}->{to_id}"
+    if not isinstance(from_id, str) or not isinstance(to_id, str):
+        raise ValidationError("edge endpoints must be strings")
+    return json.dumps([from_id, to_id], ensure_ascii=True, separators=(",", ":"))
+
+
+def _pair_key_for_state(state: dict[str, Any], from_id: str, to_id: str) -> str:
+    if _edge_encoding(state, context="edge state") == _LEGACY_EDGE_KEY_ENCODING:
+        if not isinstance(from_id, str) or not isinstance(to_id, str):
+            raise ValidationError("edge endpoints must be strings")
+        return f"{from_id}->{to_id}"
+    return _pair_key(from_id, to_id)
 
 
 def _split_pair_key(pair_key: str) -> tuple[str, str]:
     from_id, to_id = pair_key.split("->", 1)
     return from_id, to_id
+
+
+def _split_pair_key_for_state(
+    state: dict[str, Any], pair_key: str, *, context: str
+) -> tuple[str, str]:
+    encoding = _edge_encoding(state, context=context)
+    if encoding == _LEGACY_EDGE_KEY_ENCODING:
+        try:
+            return _split_pair_key(pair_key)
+        except (AttributeError, ValueError) as exc:
+            raise ValidationError(f"{context}: invalid legacy edge key {pair_key!r}") from exc
+
+    try:
+        pair = json.loads(pair_key)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{context}: invalid json-pair-v1 edge key {pair_key!r}") from exc
+    if (
+        not isinstance(pair, list)
+        or len(pair) != 2
+        or not all(isinstance(part, str) for part in pair)
+        or _pair_key(pair[0], pair[1]) != pair_key
+    ):
+        raise ValidationError(
+            f"{context}: json-pair-v1 edge key is not a canonical string pair: {pair_key!r}"
+        )
+    return pair[0], pair[1]
+
+
+def _validate_edge_keys(state: dict[str, Any], *, context: str) -> None:
+    if _edge_encoding(state, context=context) != _EDGE_KEY_ENCODING:
+        return
+    edges = state.get("edges", {})
+    if not isinstance(edges, dict):
+        raise ValidationError(f"{context}: edges must be an object")
+    for pair_key in edges:
+        _split_pair_key_for_state(state, pair_key, context=context)
+
+
+def _normalize_edge_state(state: dict[str, Any], *, context: str) -> dict[str, Any]:
+    normalized = copy.deepcopy(state)
+    _edge_encoding(normalized, context=context)
+    edges = normalized.get("edges", {})
+    if not isinstance(edges, dict):
+        raise ValidationError(f"{context}: edges must be an object")
+    migrated: dict[str, Any] = {}
+    for key, value in edges.items():
+        from_id, to_id = _split_pair_key_for_state(normalized, key, context=context)
+        migrated[_pair_key(from_id, to_id)] = value
+    if "edges" in normalized:
+        normalized["edges"] = migrated
+    normalized["edge_key_encoding"] = _EDGE_KEY_ENCODING
+    return normalized
 
 
 def _apply_scene_spotlight(state: dict[str, Any], event: dict[str, Any]) -> None:
@@ -188,7 +269,7 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
 
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:
-    state = copy.deepcopy(initial_state)
+    state = _normalize_edge_state(initial_state, context="replay initial state")
     for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
@@ -210,12 +291,14 @@ def write_snapshot(world: Path, state: dict[str, Any], name: str) -> Path:
     snapshots = world / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     path = snapshots / f"{name}.json"
-    jsonio.write_pretty_json(path, state)
+    jsonio.write_pretty_json(path, _normalize_edge_state(state, context="snapshot write"))
     return path
 
 
 def load_snapshot(path: Path) -> dict[str, Any]:
-    return _read_json(path)
+    state = _read_json(path)
+    _validate_edge_keys(state, context=f"snapshot {path}")
+    return state
 
 
 def diff_states(left: dict[str, Any], right: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -239,6 +322,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _validate_tower(state: dict[str, Any]) -> None:
+    _validate_edge_keys(state, context="state/tower.json")
     for field in ("seed", "day", "budget", "morale", "reputation", "rooms", "characters"):
         if field not in state:
             raise ValidationError(f"state/tower.json: missing {field}")
