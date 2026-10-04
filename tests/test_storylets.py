@@ -838,3 +838,61 @@ def test_load_registry_preserves_shorthand_and_value_free_present_quality_tests(
         "present",
         None,
     )
+
+
+def test_load_registry_rejects_duplicate_decision_point_ids_within_storylet(
+    tmp_path: Path,
+) -> None:
+    second_point = '''\
+[[decision_points]]
+id = "cleanup_choice"
+decision_type = "social_disclosure"
+character_slot = "witness"
+'''
+    text = VALID_STORYLET.replace("[[effect_hooks]]", second_point + "\n[[effect_hooks]]", 1)
+    world = _write_storylets(tmp_path / "tower", {"broken": text})
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_registry(world)
+
+    message = str(exc_info.value)
+    for detail in ("data/storylets/broken.toml", "cleanup_choice", "shared-space-repair"):
+        assert detail in message
+
+
+def test_load_registry_preserves_distinct_decision_point_order_and_fields(
+    tmp_path: Path,
+) -> None:
+    second_point = '''\
+[[decision_points]]
+id = "disclose_concern"
+decision_type = "social_disclosure"
+character_slot = "witness"
+'''
+    text = VALID_STORYLET.replace("[[effect_hooks]]", second_point + "\n[[effect_hooks]]", 1)
+    world = _write_storylets(tmp_path / "tower", {"ordered": text})
+
+    registry = load_registry(world)
+
+    points = registry.storylets["shared-space-repair"].decision_points
+    assert [(point.id, point.decision_type, point.character_slot) for point in points] == [
+        ("cleanup_choice", "incident_response", "responder"),
+        ("disclose_concern", "social_disclosure", "witness"),
+    ]
+
+
+def test_load_registry_allows_decision_point_id_reuse_across_storylets(
+    tmp_path: Path,
+) -> None:
+    second_storylet = VALID_STORYLET.replace(
+        'id = "shared-space-repair"', 'id = "another-storylet"', 1
+    ).replace('title = "Shared Space Repair"', 'title = "Another Storylet"', 1)
+    world = _write_storylets(
+        tmp_path / "tower",
+        {"first": VALID_STORYLET, "second": second_storylet},
+    )
+
+    registry = load_registry(world)
+
+    assert registry.storylets["shared-space-repair"].decision_points[0].id == "cleanup_choice"
+    assert registry.storylets["another-storylet"].decision_points[0].id == "cleanup_choice"

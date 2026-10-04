@@ -405,6 +405,7 @@ def _validate_decision_points(
         raise ValidationError(f"{source}: storylet {storylet_id} missing decision_points")
     slot_names = {slot.slot for slot in participants}
     points: list[DecisionPoint] = []
+    seen_ids: set[str] = set()
     for entry in value:
         if not isinstance(entry, dict):
             raise ValidationError(
@@ -429,6 +430,11 @@ def _validate_decision_points(
                 f"{source}: decision_point character_slot {entry['character_slot']!r} "
                 f"is not a declared slot for {storylet_id}"
             )
+        if entry["id"] in seen_ids:
+            raise ValidationError(
+                f"{source}: duplicate decision_point id {entry['id']!r} for {storylet_id}"
+            )
+        seen_ids.add(entry["id"])
         points.append(
             DecisionPoint(
                 id=entry["id"],
