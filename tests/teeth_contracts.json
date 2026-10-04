@@ -5,6 +5,7 @@
     "run",
     "pytest",
     "-q",
+    "tests/test_worldstate.py",
     "tests/test_contracts.py",
     "tests/test_tick_contracts.py"
   ],
@@ -14,6 +15,7 @@
     "pytest",
     "--collect-only",
     "-q",
+    "tests/test_worldstate.py",
     "tests/test_contracts.py",
     "tests/test_tick_contracts.py"
   ],
@@ -101,6 +103,27 @@
       "oracle": "real",
       "find": "events.append(terminal)\n            continue\n        remaining = contract[\"deadline_day\"] - day",
       "replace": "events.append(terminal)\n        remaining = contract[\"deadline_day\"] - day"
+    },
+    {
+      "label": "[must-kill] accept or decline an offer on or after frozen expiry",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "if event_day >= expires_day:",
+      "replace": "if False:"
+    },
+    {
+      "label": "[must-kill] expire an offer before its frozen expiry day",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "elif event_day < expires_day:",
+      "replace": "elif False:"
+    },
+    {
+      "label": "[must-kill] use pre-transition state day instead of event day",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "event_day = event.get(\"day\")",
+      "replace": "event_day = state.get(\"day\")"
     },
     {
       "label": "[must-kill] append payroll before narrator success",

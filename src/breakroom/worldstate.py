@@ -313,6 +313,23 @@ def _apply_contract_event(state: dict[str, Any], event: dict[str, Any]) -> None:
     record = records.get(contract_id) if isinstance(contract_id, str) else None
     if not isinstance(record, dict):
         raise ValidationError(f"{event_type} event: unknown contract {contract_id!r}")
+    if event_type in {"contract_accepted", "contract_declined", "contract_expired"}:
+        event_day = event.get("day")
+        expires_day = record.get("expires_day")
+        if type(event_day) is not int or type(expires_day) is not int:
+            raise ValidationError(
+                f"{event_type} event: day and frozen offer expires_day must be integers"
+            )
+        if event_type in {"contract_accepted", "contract_declined"}:
+            if event_day >= expires_day:
+                raise ValidationError(
+                    f"{event_type} event: offer {contract_id!r} expired on day {expires_day}"
+                )
+        elif event_day < expires_day:
+            raise ValidationError(
+                f"contract_expired event: offer {contract_id!r} has not expired until "
+                f"day {expires_day}"
+            )
     if event_type == "contract_accepted":
         if record.get("status") != "offered":
             raise ValidationError(f"contract {contract_id!r} is not available for acceptance")
