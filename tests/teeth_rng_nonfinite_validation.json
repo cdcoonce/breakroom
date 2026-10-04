@@ -1,0 +1,44 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_rng.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_rng.py"],
+  "mutants": [
+    {
+      "label": "remove bernoulli non-finite probability rejection",
+      "file": "../src/breakroom/resolution/rng.py",
+      "oracle": "real",
+      "find": "if not math.isfinite(probability):\n            raise ValueError(\"probability must be finite\")",
+      "replace": "if False:\n            raise ValueError(\"probability must be finite\")"
+    },
+    {
+      "label": "remove weighted-choice non-finite weight rejection",
+      "file": "../src/breakroom/resolution/rng.py",
+      "oracle": "real",
+      "find": "if any(not math.isfinite(weight) for _, weight in choices):\n            raise ValueError(\"choice weights must be finite\")",
+      "replace": "if False:\n            raise ValueError(\"choice weights must be finite\")"
+    },
+    {
+      "label": "consume bernoulli draw before rejecting non-finite probability",
+      "file": "../src/breakroom/resolution/rng.py",
+      "oracle": "real",
+      "find": "if not math.isfinite(probability):\n            raise ValueError(\"probability must be finite\")",
+      "replace": "if not math.isfinite(probability):\n            self._rng.random()\n            raise ValueError(\"probability must be finite\")"
+    },
+    {
+      "label": "consume weighted-choice draw before rejecting non-finite weight",
+      "file": "../src/breakroom/resolution/rng.py",
+      "oracle": "real",
+      "find": "if any(not math.isfinite(weight) for _, weight in choices):\n            raise ValueError(\"choice weights must be finite\")",
+      "replace": "if any(not math.isfinite(weight) for _, weight in choices):\n            self._rng.random()\n            raise ValueError(\"choice weights must be finite\")"
+    },
+    {
+      "label": "[control] equivalent boolean form of probability predicate",
+      "file": "../src/breakroom/resolution/rng.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "For float inputs math.isfinite returns a bool, so `not math.isfinite(x)` and `math.isfinite(x) is False` have the same result. This makes no claim about monkeypatching math.isfinite or inspecting source text.",
+      "find": "if not math.isfinite(probability):",
+      "replace": "if math.isfinite(probability) is False:"
+    }
+  ]
+}

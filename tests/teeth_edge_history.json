@@ -1,0 +1,61 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py::test_strictest_permanent_cap_wins_and_a_later_scar_cannot_loosen_it",
+    "tests/test_worldstate.py::test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it",
+    "tests/test_worldstate.py::test_delta_only_history_keeps_inherited_bounds_and_prior_provenance"
+  ],
+  "collect_command": [
+    "python",
+    "-m",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py::test_strictest_permanent_cap_wins_and_a_later_scar_cannot_loosen_it",
+    "tests/test_worldstate.py::test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it",
+    "tests/test_worldstate.py::test_delta_only_history_keeps_inherited_bounds_and_prior_provenance"
+  ],
+  "mutants": [
+    {
+      "label": "record raw requested cap",
+      "find": "\"cap\": effective_cap,",
+      "replace": "\"cap\": cap,",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real"
+    },
+    {
+      "label": "record raw requested floor",
+      "find": "\"floor\": effective_floor}",
+      "replace": "\"floor\": floor}",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real"
+    },
+    {
+      "label": "drop omitted inherited cap",
+      "find": "\"cap\": effective_cap,",
+      "replace": "\"cap\": effective_cap if cap is not None else None,",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real"
+    },
+    {
+      "label": "drop omitted inherited floor",
+      "find": "\"floor\": effective_floor}",
+      "replace": "\"floor\": effective_floor if floor is not None else None}",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real"
+    },
+    {
+      "label": "[control] parenthesize cap",
+      "find": "\"cap\": effective_cap,",
+      "replace": "\"cap\": (effective_cap),",
+      "expect": "survived",
+      "why": "Parentheses around the same scalar expression do not change its value, evaluation order, or stored history on any path.",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_tick_incidents.py", "-k", "incident_free_storylet"
+  ],
+  "collect_command": [
+    "uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py",
+    "-k", "incident_free_storylet"
+  ],
+  "mutants": [
+    {
+      "label": "restore unconditional incident tuple indexing",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            if incident_ids:\n                spotlight_incident = incidents[incident_ids[0]]",
+      "replace": "            if True:\n                spotlight_incident = incidents[incident_ids[0]]"
+    },
+    {
+      "label": "remove the incident-absent narrator fallback",
+      "file": "../src/breakroom/narrator.py",
+      "oracle": "real",
+      "find": "    if brief[\"incident\"] is None:\n        return f\"{character}: {brief['storylet']['premise']}\"\n",
+      "replace": ""
+    },
+    {
+      "label": "borrow an arbitrary fired incident",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            spotlight_incident = None",
+      "replace": "            spotlight_incident = incidents[fired_ids[0]]"
+    },
+    {
+      "label": "assign an arbitrary room",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            room = None",
+      "replace": "            room = state[\"rooms\"][0]"
+    },
+    {
+      "label": "silently skip the selected incident-free storylet",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "        if selection is None:",
+      "replace": "        if selection is None or not selection.storylet.eligibility.incident_ids:"
+    },
+    {
+      "label": "[control] swap independent null initializers",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The two local assignments set distinct names to None without reading either name or calling code. Their order cannot affect the subsequent incident lookup or emitted brief.",
+      "find": "            spotlight_incident = None\n            room = None",
+      "replace": "            room = None\n            spotlight_incident = None"
+    }
+  ]
+}

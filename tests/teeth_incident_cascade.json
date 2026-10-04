@@ -1,0 +1,27 @@
+{
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_incidents.py::test_evaluate_tick_emits_diamond_incident_once_per_cascade"
+  ],
+  "mutants": [
+    {
+      "label": "Remove per-cascade duplicate guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "    if incident.id in emitted_incident_ids:\n        return\n    emitted_incident_ids.add(incident.id)",
+      "replace": "    emitted_incident_ids.add(incident.id)",
+      "oracle": "real"
+    },
+    {
+      "label": "Explicit None return",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "        return\n    emitted_incident_ids.add(incident.id)",
+      "replace": "        return None\n    emitted_incident_ids.add(incident.id)",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Returning None explicitly is equivalent to the existing implicit None return and does not alter traversal."
+    }
+  ]
+}
