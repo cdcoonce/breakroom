@@ -726,7 +726,10 @@ def move_dial(
                 raise ValidationError("incident event: morale_delta must be numeric")
             result["morale"] += delta
         elif event_type == "dial_delta":
-            for dial, delta in event["dials"].items():
+            dials = event.get("dials")
+            if not isinstance(dials, dict):
+                raise ValidationError("dial_delta event: dials must be an object")
+            for dial, delta in dials.items():
                 if dial not in result:
                     raise ValidationError(f"unknown dial: {dial}")
                 if isinstance(delta, bool) or not isinstance(delta, (int, float)):
