@@ -1,9 +1,11 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from breakroom.init import init_world
+from breakroom.tick import tick_world
 from breakroom.worldstate import (
     ValidationError,
     apply_event,
@@ -190,6 +192,47 @@ def test_replaying_event_log_reproduces_current_state(tmp_path: Path) -> None:
     )
 
     assert replay_events(initial, world / "events.jsonl") == load_world(world).state
+
+
+def test_replaying_persisted_quiet_day_reproduces_tick_state(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    initial = load_world(world).state
+    incidents_path = world / "data" / "incidents.toml"
+    incidents_path.write_text(
+        re.sub(r"base_rate = [\d.]+", "base_rate = 0.0", incidents_path.read_text()),
+        encoding="utf-8",
+    )
+
+    tick_world(world)
+
+    persisted_events = [
+        json.loads(line) for line in (world / "events.jsonl").read_text().splitlines()
+    ]
+    quiet_events = [event for event in persisted_events if event["type"] == "quiet_day"]
+    persisted_state = load_world(world).state
+
+    assert len(quiet_events) == 1
+    assert quiet_events[0]["day"] == persisted_state["day"]
+    assert quiet_events[0]["rolls"]
+    assert all(record["result"] is False for record in quiet_events[0]["rolls"])
+    assert replay_events(initial, world / "events.jsonl") == persisted_state
+    assert persisted_state["day"] == initial["day"] + 1
+    assert {
+        key: value for key, value in persisted_state.items() if key != "day"
+    } == {key: value for key, value in initial.items() if key != "day"}
+
+
+def test_applying_older_quiet_day_does_not_move_day_backwards() -> None:
+    state = {"day": 5, "morale": 50, "edges": {}, "spotlight_history": {}}
+    quiet_day = {"type": "quiet_day", "day": 3, "rolls": [{"result": False}]}
+
+    assert apply_event(state, quiet_day) == state
+
+
+def test_applying_unsupported_event_type_still_raises() -> None:
+    with pytest.raises(ValidationError, match="event type unsupported: unsupported"):
+        apply_event({"day": 0}, {"type": "unsupported", "day": 1})
 
 
 def test_replay_events_reports_malformed_json_file_and_physical_line(tmp_path: Path) -> None:
