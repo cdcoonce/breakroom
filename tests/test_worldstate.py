@@ -217,6 +217,33 @@ def test_snapshot_write_load_compare_is_lossless(tmp_path: Path) -> None:
     assert diff_states(loaded.state, load_snapshot(snapshot)) == {}
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["../evil", "nested/name", "nested\\name", "absolute", ".."],
+)
+def test_write_snapshot_rejects_path_names_before_creating_files(
+    tmp_path: Path, name: str
+) -> None:
+    world = tmp_path / "tower"
+    if name == "absolute":
+        name = str(tmp_path / name)
+
+    with pytest.raises(ValidationError):
+        write_snapshot(world, {"day": 0}, name)
+
+    assert not (world / "snapshots").exists()
+    assert not (tmp_path / "evil.json").exists()
+
+
+def test_write_snapshot_preserves_other_double_dot_names(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+
+    snapshot = write_snapshot(world, {"day": 0}, "report..final")
+
+    assert snapshot == world / "snapshots" / "report..final.json"
+    assert load_snapshot(snapshot) == {"day": 0}
+
+
 def test_diff_states_reports_left_and_right_for_changed_keys() -> None:
     left = {"morale": 50, "reputation": 50, "day": 3}
     right = {"morale": 45, "reputation": 50, "day": 3}
