@@ -1,0 +1,36 @@
+{
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_incidents.py",
+    "-k", "non_string_precondition_path or non_string_precondition_operator or empty_precondition_path_policy"
+  ],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_incidents.py"],
+  "mutants": [
+    {
+      "label": "remove precondition path type guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(path, str):",
+      "replace": "if False:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "Non-string paths must fail through the public loader with a canonical ValidationError rather than passing through to evaluation."
+    },
+    {
+      "label": "remove precondition operator type guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(operator, str):",
+      "replace": "if False:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "The type check must run before operator membership so arrays do not leak an unhashable TypeError."
+    },
+    {
+      "label": "equivalent path type predicate",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(path, str):",
+      "replace": "if isinstance(path, str) is False:",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Harmless control: this is the same boolean predicate written explicitly."
+    }
+  ]
+}

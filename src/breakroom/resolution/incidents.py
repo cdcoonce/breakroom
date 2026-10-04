@@ -136,11 +136,22 @@ def _validate_precondition(relative: Path, incident_id: str, entry: Any) -> Prec
             raise ValidationError(
                 f"{relative}: precondition missing {field_name} for {incident_id}"
             )
-    if entry["operator"] not in VALID_OPERATORS:
+    path = entry["path"]
+    if not isinstance(path, str):
         raise ValidationError(
-            f"{relative}: invalid precondition operator {entry['operator']!r} for {incident_id}"
+            f"{relative}: precondition path must be a string for {incident_id}, got {path!r}"
         )
-    return Precondition(path=entry["path"], operator=entry["operator"], value=entry["value"])
+    operator = entry["operator"]
+    if not isinstance(operator, str):
+        raise ValidationError(
+            f"{relative}: precondition operator must be a string for {incident_id}, "
+            f"got {operator!r}"
+        )
+    if operator not in VALID_OPERATORS:
+        raise ValidationError(
+            f"{relative}: invalid precondition operator {operator!r} for {incident_id}"
+        )
+    return Precondition(path=path, operator=operator, value=entry["value"])
 
 
 def _validate_chain_trigger(relative: Path, incident_id: str, entry: Any) -> ChainTrigger:
