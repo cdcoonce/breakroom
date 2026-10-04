@@ -312,9 +312,15 @@ def _check_precondition(state: dict[str, Any], precondition: Precondition) -> bo
         return False
     if precondition.operator == "eq":
         return value == precondition.value
-    if precondition.operator == "gte":
-        return value >= precondition.value
-    return value <= precondition.value
+    try:
+        if precondition.operator == "gte":
+            return value >= precondition.value
+        return value <= precondition.value
+    except TypeError as exc:
+        raise ValidationError(
+            f"precondition {precondition.path!r} operator {precondition.operator!r} "
+            f"cannot compare {value!r} with {precondition.value!r}"
+        ) from exc
 
 
 def _resolve_path(state: dict[str, Any], path: str) -> tuple[Any, bool]:
