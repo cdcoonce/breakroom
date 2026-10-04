@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from breakroom.economy import load_rulebook, resolve_dial_movement
 from breakroom.init import init_world
 from breakroom.tick import tick_world
 from breakroom.worldstate import (
@@ -160,7 +161,67 @@ def test_load_world_rejects_non_int_scalar_field(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError, match="state/tower.json: morale must be an int"):
+    with pytest.raises(
+        ValidationError, match="state/tower.json: morale must be a finite int or float"
+    ):
+        load_world(world)
+
+
+def test_load_world_accepts_fractional_and_out_of_range_finite_dials(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text())
+    state.update(budget=-0.25, morale=101.5, reputation=-2.5)
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    assert load_world(world).state["budget"] == -0.25
+    assert load_world(world).state["morale"] == 101.5
+    assert load_world(world).state["reputation"] == -2.5
+
+
+def test_snapshot_round_trip_preserves_fractional_dials(tmp_path: Path) -> None:
+    state = {
+        "seed": 42,
+        "day": 3,
+        "budget": 1000.5,
+        "morale": 47.5,
+        "reputation": 52.25,
+        "rooms": [],
+        "characters": [],
+    }
+
+    snapshot = write_snapshot(tmp_path, state, "fractional-dials")
+
+    loaded = load_snapshot(snapshot)
+    assert {key: loaded[key] for key in ("budget", "morale", "reputation")} == {
+        key: state[key] for key in ("budget", "morale", "reputation")
+    }
+    assert "edge_key_encoding" not in state
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("budget", True),
+        ("morale", float("nan")),
+        ("reputation", float("inf")),
+        ("budget", float("-inf")),
+        ("seed", 42.0),
+        ("day", True),
+    ],
+)
+def test_load_world_rejects_nonfinite_dials_and_noninteger_clock_fields(
+    tmp_path: Path, field: str, value
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text())
+    state[field] = value
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
         load_world(world)
 
 
@@ -1107,6 +1168,35 @@ def test_replay_events_rejects_malformed_incident_payload(tmp_path: Path) -> Non
 
     with pytest.raises(ValidationError):
         replay_events({"day": 0, "morale": 50}, path)
+
+
+@pytest.mark.parametrize(("morale", "delta", "expected"), [(10, -25, -15), (140, 25, 165)])
+def test_replay_keeps_out_of_range_legacy_morale(
+    tmp_path: Path, morale: int, delta: int, expected: int
+) -> None:
+    path = tmp_path / "events.jsonl"
+    event = {"type": "incident", "day": 1, "incident": {"morale_delta": delta}}
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    replayed = replay_events({"day": 0, "morale": morale}, path)
+
+    assert replayed["morale"] == expected
+
+
+def test_replay_mixes_legacy_and_versioned_dial_receipts(tmp_path: Path) -> None:
+    legacy = {"type": "incident", "day": 1, "incident": {"morale_delta": -80}}
+    versioned = resolve_dial_movement(
+        {"type": "incident", "day": 2, "incident": {"morale_delta": -5}},
+        load_rulebook(tmp_path),
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps(legacy) + "\n" + json.dumps(versioned) + "\n", encoding="utf-8"
+    )
+
+    replayed = replay_events({"day": 0, "morale": 50}, path)
+
+    assert replayed["morale"] == 0
 
 
 @pytest.mark.parametrize(

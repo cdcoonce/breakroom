@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 
 from breakroom import jsonio
@@ -186,6 +187,10 @@ def init_world(world: Path, seed: int) -> None:
     )
     (world / "data" / "norms.toml").write_text(STARTER_NORMS, encoding="utf-8")
     (world / "data" / "incidents.toml").write_text(STARTER_INCIDENTS, encoding="utf-8")
+    (world / "data" / "economy.toml").write_text(
+        files("breakroom").joinpath("data/economy.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     for filename, body in STARTER_STORYLETS.items():
         (world / "data" / "storylets" / filename).write_text(body, encoding="utf-8")
     (world / "events.jsonl").write_text("", encoding="utf-8")

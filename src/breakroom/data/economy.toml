@@ -1,0 +1,6 @@
+[events.incident]
+dial = "morale"
+amount_path = "incident.morale_delta"
+
+[events.dial_delta]
+dials_path = "dials"

@@ -12,7 +12,7 @@ from breakroom.events import append_event
 from breakroom.init import init_world
 from breakroom.resolution.incidents import load_incident_table
 from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
-from breakroom.worldstate import ValidationError
+from breakroom.worldstate import ValidationError, load_world
 
 # Mirrors STARTER_INCIDENTS in breakroom.init: which room each starter incident points
 # at, so the missing-room test can confirm the raised error names the right pair
@@ -1037,3 +1037,107 @@ def test_tick_without_edge_effect_normalizes_legacy_tower_before_save(
         {key: value for key, value in state.items() if key != "edge_key_encoding"},
         world / "events.jsonl",
     ) == saved
+
+
+def test_fractional_dial_movements_survive_tick_reload_and_replay(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        """[[incidents.effects]]
+type = "incident_detail"
+name = "Fractional probe"
+room = "break-room"
+morale_delta = -2.5
+norm_tags = []
+needs_cleanup = false
+
+[[incidents.effects]]
+type = "dial_delta"
+dials = { budget = 0.5 }
+incident_id = "probe-incident"
+cascade_id = "fractional"
+depth = 0
+tick = 1""",
+    )
+    for path in (world / "data" / "storylets").glob("*.toml"):
+        path.unlink()
+    initial = load_world(world).state
+
+    tick_world(world)
+    first = load_world(world).state
+    tick_world(world)
+    saved = load_world(world).state
+    events_path = world / "events.jsonl"
+    events = read_jsonl(events_path)
+
+    assert first["morale"] == 47.5 and first["budget"] == 1000.5
+    assert saved["morale"] == 45.0 and saved["budget"] == 1001.0
+    assert [event["type"] for event in events] == [
+        "incident",
+        "dial_delta",
+        "quiet_day",
+        "incident",
+        "dial_delta",
+        "quiet_day",
+    ]
+    assert events[0]["dial_movement"]["dials"] == {"morale": -2.5}
+    assert events[1]["dial_movement"]["dials"] == {"budget": 0.5}
+    assert worldstate.replay_events(initial, events_path) == saved
+
+
+def test_nonfinite_new_movement_fails_before_any_tick_persistence(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    _write_probe_incident(
+        world,
+        """[[incidents.effects]]
+type = "incident_detail"
+name = "Overflow probe"
+room = "break-room"
+morale_delta = 0
+norm_tags = []
+needs_cleanup = false
+
+[[incidents.effects]]
+type = "dial_delta"
+dials = { budget = 1.7e308 }
+incident_id = "probe-incident"
+cascade_id = "overflow"
+depth = 0
+tick = 1""",
+    )
+    state_path = world / "state" / "tower.json"
+    state = json.loads(state_path.read_text())
+    state["budget"] = 1.7e308
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before_state = state_path.read_bytes()
+    events_path = world / "events.jsonl"
+    before_events = events_path.read_bytes()
+
+    with pytest.raises(ValidationError, match="finite"):
+        tick_world(world)
+
+    assert state_path.read_bytes() == before_state
+    assert events_path.read_bytes() == before_events
+    assert not (world / "chronicles" / "day-0001.md").exists()
+
+
+def test_fixed_seed_ticks_reproduce_exact_dial_trajectories(tmp_path: Path, stub_narrator) -> None:
+    worlds = [tmp_path / "first", tmp_path / "second"]
+    trajectories = []
+    for world in worlds:
+        init_world(world, seed=42)
+        initial = load_world(world).state
+        daily = []
+        for _ in range(2):
+            tick_world(world)
+            daily.append(load_world(world).state["morale"])
+        events_path = world / "events.jsonl"
+        saved = load_world(world).state
+        assert worldstate.replay_events(initial, events_path) == saved
+        assert all("dial_movement" in event for event in events_of(world, "incident"))
+        trajectories.append((daily, events_of(world, "incident")))
+
+    assert trajectories[0] == trajectories[1]
+    assert trajectories[0][0] == [45, 40]
