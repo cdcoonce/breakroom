@@ -1,0 +1,23 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py"],
+  "mutants": [
+    {
+      "label": "allow fired incident details lookup to raise raw KeyError",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "        if incident_id not in details:\n            raise TickError(\n                f\"fired incident {incident_id!r} has no matching incident_detail event\"\n            )",
+      "replace": "        if False:\n            raise TickError(\n                f\"fired incident {incident_id!r} has no matching incident_detail event\"\n            )"
+    },
+    {
+      "label": "[control] reorder independent keyword arguments",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The arguments to write_chronicle are bound by name, and each value is already computed before the call. Reordering these source-level keyword arguments preserves the call and output for every test path; this claim applies only to this call site.",
+      "find": "        world, day=day, brief=brief, prose=prose, incidents_fired=bool(fired_ids)",
+      "replace": "        world, day=day, brief=brief, incidents_fired=bool(fired_ids), prose=prose"
+    }
+  ]
+}

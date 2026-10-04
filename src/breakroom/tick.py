@@ -48,6 +48,10 @@ def tick_world(world: Path) -> None:
 
     incidents: dict[str, dict[str, Any]] = {}
     for incident_id in fired_ids:
+        if incident_id not in details:
+            raise TickError(
+                f"fired incident {incident_id!r} has no matching incident_detail event"
+            )
         detail = details[incident_id]
         incident = {
             "id": incident_id,
