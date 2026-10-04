@@ -954,3 +954,41 @@ def test_character_quality_empty_name_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="trait:"):
         load_world(world)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "incident", "day": 1},
+        {"type": "incident", "day": 1, "incident": []},
+        {"type": "incident", "day": 1, "incident": {"morale_delta": "-2"}},
+        {"type": "incident", "day": 1, "incident": {"morale_delta": True}},
+    ],
+)
+def test_apply_event_rejects_malformed_incident_payload(event: dict) -> None:
+    with pytest.raises(ValidationError):
+        apply_event({"day": 0, "morale": 50}, event)
+
+
+def test_replay_events_rejects_malformed_incident_payload(tmp_path: Path) -> None:
+    event = {"type": "incident", "day": 1, "incident": []}
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        replay_events({"day": 0, "morale": 50}, path)
+
+
+@pytest.mark.parametrize(
+    ("incident", "expected_morale"),
+    [({}, 50), ({"morale_delta": -2}, 48), ({"morale_delta": -2.5}, 47.5)],
+)
+def test_apply_event_keeps_valid_incident_morale_delta_behavior(
+    incident: dict, expected_morale: float
+) -> None:
+    event = {"type": "incident", "day": 1, "incident": incident}
+
+    result = apply_event({"day": 0, "morale": 50}, event)
+
+    assert result["day"] == 1
+    assert result["morale"] == expected_morale
