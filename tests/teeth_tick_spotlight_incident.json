@@ -1,7 +1,7 @@
 {
   "runner": "pytest",
-  "test_command": ["uv", "run", "pytest", "-q", "test_tick_incidents.py"],
-  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "test_tick_incidents.py"],
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py"],
   "mutants": [
     {
       "label": "original first-declared incident lookup",
