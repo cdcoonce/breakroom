@@ -68,6 +68,48 @@
       "replace": "            separators=(\",\", \": \"),"
     },
     {
+      "label": "[must-kill] default movement resolves an unrelated cwd rulebook",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "event, rulebook if rulebook is not None else _load_bundled_rulebook()",
+      "replace": "event, rulebook if rulebook is not None else load_rulebook(Path(\".\"))",
+      "test_command": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/test_economy.py::test_two_argument_move_dial_uses_bundled_rulebook_from_decoy_cwd"
+      ]
+    },
+    {
+      "label": "[must-kill] non-string rulebook dial skips type validation",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        not isinstance(dial, str)\n        or dial not in _DIALS",
+      "replace": "        dial not in _DIALS",
+      "test_command": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/test_economy.py::test_present_invalid_rulebook_fails_closed_without_bundle_fallback"
+      ]
+    },
+    {
+      "label": "[must-kill] AST writer guard skips unlisted production modules",
+      "file": "../src/breakroom/cli.py",
+      "oracle": "real",
+      "find": "    if args.command == \"init\":\n        init_world(args.world, seed=args.seed)\n        return 0",
+      "replace": "    if args.command == \"init\":\n        init_world(args.world, seed=args.seed)\n        if False:\n            state[\"morale\"] = 1\n        return 0",
+      "test_command": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/test_economy.py::test_only_economy_mutator_contains_dynamic_dial_state_writes"
+      ]
+    },
+    {
       "label": "[control] reorder equivalent TOML table declarations",
       "file": "../src/breakroom/data/economy.toml",
       "oracle": "real",

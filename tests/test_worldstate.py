@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from breakroom.economy import load_rulebook, resolve_dial_movement
 from breakroom.init import init_world
 from breakroom.tick import tick_world
 from breakroom.worldstate import (
@@ -1167,6 +1168,35 @@ def test_replay_events_rejects_malformed_incident_payload(tmp_path: Path) -> Non
 
     with pytest.raises(ValidationError):
         replay_events({"day": 0, "morale": 50}, path)
+
+
+@pytest.mark.parametrize(("morale", "delta", "expected"), [(10, -25, -15), (140, 25, 165)])
+def test_replay_keeps_out_of_range_legacy_morale(
+    tmp_path: Path, morale: int, delta: int, expected: int
+) -> None:
+    path = tmp_path / "events.jsonl"
+    event = {"type": "incident", "day": 1, "incident": {"morale_delta": delta}}
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    replayed = replay_events({"day": 0, "morale": morale}, path)
+
+    assert replayed["morale"] == expected
+
+
+def test_replay_mixes_legacy_and_versioned_dial_receipts(tmp_path: Path) -> None:
+    legacy = {"type": "incident", "day": 1, "incident": {"morale_delta": -80}}
+    versioned = resolve_dial_movement(
+        {"type": "incident", "day": 2, "incident": {"morale_delta": -5}},
+        load_rulebook(tmp_path),
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps(legacy) + "\n" + json.dumps(versioned) + "\n", encoding="utf-8"
+    )
+
+    replayed = replay_events({"day": 0, "morale": 50}, path)
+
+    assert replayed["morale"] == 0
 
 
 @pytest.mark.parametrize(

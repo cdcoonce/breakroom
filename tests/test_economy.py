@@ -71,6 +71,27 @@ def test_bundled_rulebook_hash_is_canonical_semantic_json(tmp_path: Path, monkey
     }
 
 
+def test_two_argument_move_dial_uses_bundled_rulebook_from_decoy_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    api = economy_api()
+    decoy = tmp_path / "cwd-decoy"
+    data = decoy / "data"
+    data.mkdir(parents=True)
+    (data / "economy.toml").write_text(
+        '[events.incident]\ndial = "reputation"\namount_path = "incident.morale_delta"\n'
+        '[events.dial_delta]\ndials_path = "dials"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(decoy)
+
+    changed = api.move_dial(
+        {"budget": 1, "morale": 10, "reputation": 20}, _incident(-2)
+    )
+
+    assert changed == {"budget": 1, "morale": 8, "reputation": 20}
+
+
 def test_world_override_selects_future_mapping_but_not_frozen_receipts(tmp_path: Path) -> None:
     api = economy_api()
     world = tmp_path / "world"
@@ -105,6 +126,11 @@ def test_world_override_selects_future_mapping_but_not_frozen_receipts(tmp_path:
     [
         "[events.incident\n",
         '[events.incident]\ndial = "unknown"\namount_path = "incident.morale_delta"\n',
+        '[events.incident]\ndial = []\namount_path = "incident.morale_delta"\n'
+        '[events.dial_delta]\ndials_path = "dials"\n',
+        '[events.incident]\ndial = { target = "morale" }\n'
+        'amount_path = "incident.morale_delta"\n'
+        '[events.dial_delta]\ndials_path = "dials"\n',
         '[events.incident]\ndial = "morale"\namount_path = "incident.morale_delta"\n'
         '[events.dial_delta]\ndials_path = "dials"\nextra = true\n',
         '[events.incident]\ndial = "morale"\namount_path = "incident.morale_delta"\n'
@@ -122,6 +148,20 @@ def test_present_invalid_rulebook_fails_closed_without_bundle_fallback(
 
     with pytest.raises(ValidationError):
         api.load_rulebook(world)
+
+
+@pytest.mark.parametrize("dial", [[], {"target": "morale"}])
+def test_caller_supplied_rulebooks_reject_nonstring_dials(tmp_path: Path, dial) -> None:
+    api = economy_api()
+    rulebook = api.load_rulebook(tmp_path)
+    rulebook["events"]["incident"]["dial"] = dial
+
+    with pytest.raises(ValidationError, match="invalid events.incident mapping"):
+        api.resolve_dial_movement(_incident(), rulebook)
+    with pytest.raises(ValidationError, match="invalid events.incident mapping"):
+        api.move_dial(
+            {"budget": 1, "morale": 10, "reputation": 20}, _incident(), rulebook=rulebook
+        )
 
 
 def test_resolver_returns_independent_copies_and_validated_hashes(tmp_path: Path) -> None:
@@ -347,18 +387,13 @@ def test_wheel_installs_bundled_rulebook_as_readable_package_resource(tmp_path: 
 
 
 def test_only_economy_mutator_contains_dynamic_dial_state_writes() -> None:
-    sources = [
-        REPO_ROOT / "src" / "breakroom" / "worldstate.py",
-        REPO_ROOT / "src" / "breakroom" / "tick.py",
-        REPO_ROOT / "src" / "breakroom" / "init.py",
-        REPO_ROOT / "src" / "breakroom" / "economy.py",
-    ]
+    package_root = REPO_ROOT / "src" / "breakroom"
+    sources = sorted(package_root.rglob("*.py"))
     forbidden = {"budget", "morale", "reputation"}
     violations = []
     for source in sources:
-        if not source.exists():
-            continue
         tree = ast.parse(source.read_text(encoding="utf-8"))
+        source_name = source.relative_to(package_root).as_posix()
 
         class Visitor(ast.NodeVisitor):
             def __init__(self, source_name: str):
@@ -402,6 +437,8 @@ def test_only_economy_mutator_contains_dynamic_dial_state_writes() -> None:
                     if (is_dial or is_state_dynamic) and not is_mutator:
                         violations.append(f"{self.source_name}:{node.lineno}")
 
-        Visitor(source.name).visit(tree)
+        # init_world's literal dial dictionary is the intentional starting baseline;
+        # this guard checks later subscript writes across every production module.
+        Visitor(source_name).visit(tree)
 
     assert violations == []

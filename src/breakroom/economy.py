@@ -27,11 +27,19 @@ def load_rulebook(world: Path) -> dict[str, Any]:
             raise ValidationError(f"{override}: cannot read economy rulebook: {exc}") from exc
         context = str(override)
     else:
-        try:
-            text = files("breakroom").joinpath("data/economy.toml").read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise ValidationError(f"bundled economy rulebook: cannot read: {exc}") from exc
-        context = "bundled economy rulebook"
+        return _load_bundled_rulebook()
+    return _parse_rulebook(text, context)
+
+
+def _load_bundled_rulebook() -> dict[str, Any]:
+    try:
+        text = files("breakroom").joinpath("data/economy.toml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValidationError(f"bundled economy rulebook: cannot read: {exc}") from exc
+    return _parse_rulebook(text, "bundled economy rulebook")
+
+
+def _parse_rulebook(text: str, context: str) -> dict[str, Any]:
     try:
         rulebook = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -114,7 +122,7 @@ def move_dial(
         return result
     if not has_metadata:
         receipt = resolve_dial_movement(
-            event, rulebook if rulebook is not None else load_rulebook(Path("."))
+            event, rulebook if rulebook is not None else _load_bundled_rulebook()
         )
         movement = _validate_movement(receipt[_MOVEMENT_KEY])
     else:
@@ -144,11 +152,13 @@ def _validate_rulebook(rulebook: Any, context: str) -> None:
     if not isinstance(events, dict) or set(events) != {"incident", "dial_delta"}:
         raise ValidationError(f"{context}: events must define incident and dial_delta")
     incident = events["incident"]
+    if not isinstance(incident, dict) or set(incident) != {"dial", "amount_path"}:
+        raise ValidationError(f"{context}: invalid events.incident mapping")
+    dial = incident["dial"]
     if (
-        not isinstance(incident, dict)
-        or set(incident) != {"dial", "amount_path"}
-        or incident.get("dial") not in _DIALS
-        or incident.get("amount_path") != "incident.morale_delta"
+        not isinstance(dial, str)
+        or dial not in _DIALS
+        or incident["amount_path"] != "incident.morale_delta"
     ):
         raise ValidationError(f"{context}: invalid events.incident mapping")
     dial_delta = events["dial_delta"]
