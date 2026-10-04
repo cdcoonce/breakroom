@@ -247,6 +247,63 @@ def test_evaluate_tick_produces_depth_two_cascade_as_single_event(tmp_path: Path
     assert all(event["cascade_id"] == cascade["id"] for event in resolution.events)
 
 
+def test_evaluate_tick_emits_diamond_incident_once_per_cascade(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '''
+[[incidents]]
+id = "a-root"
+base_rate = 1.0
+chain_triggers = [
+  { target = "b-left", mode = "direct" },
+  { target = "c-right", mode = "direct" },
+]
+
+[[incidents]]
+id = "b-left"
+base_rate = 0.0
+chain_triggers = [{ target = "d-shared", mode = "direct" }]
+
+[[incidents]]
+id = "c-right"
+base_rate = 0.0
+chain_triggers = [{ target = "d-shared", mode = "direct" }]
+
+[[incidents]]
+id = "d-shared"
+base_rate = 1.0
+effects = [{ type = "dial_delta", dials = { reputation = 2 } }]
+''',
+    )
+    table = load_incident_table(world)
+
+    first = evaluate_tick(table, state={}, seed=19, tick=7)
+    second = evaluate_tick(table, state={}, seed=19, tick=7)
+
+    assert len(first.cascades) == 2
+    diamond, independent_root = first.cascades
+    assert [member["incident_id"] for member in diamond["members"]] == [
+        "a-root",
+        "b-left",
+        "d-shared",
+        "c-right",
+    ]
+    assert [member["trigger"] for member in diamond["members"]] == [
+        "root",
+        "direct",
+        "direct",
+        "direct",
+    ]
+    assert [member["incident_id"] for member in independent_root["members"]] == [
+        "d-shared"
+    ]
+    d_effects = [event for event in first.events if event["incident_id"] == "d-shared"]
+    assert [event["cascade_id"] for event in d_effects] == [diamond["id"], independent_root["id"]]
+    assert first.cascades == second.cascades
+    assert first.events == second.events
+
+
 def test_evaluate_tick_bounds_cascade_depth(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     build_chain_table(world, MAX_CASCADE_DEPTH + 3)

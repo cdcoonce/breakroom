@@ -192,6 +192,7 @@ def evaluate_tick(
         cascade_index += 1
         cascade_id = f"{tick}:{cascade_index}"
         members: list[dict[str, Any]] = []
+        emitted_incident_ids: set[str] = set()
         _chain(
             table=table,
             state=state,
@@ -203,6 +204,7 @@ def evaluate_tick(
             tick=tick,
             members=members,
             events=events,
+            emitted_incident_ids=emitted_incident_ids,
         )
         cascades.append(
             {
@@ -229,7 +231,11 @@ def _chain(
     tick: int,
     members: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    emitted_incident_ids: set[str],
 ) -> None:
+    if incident.id in emitted_incident_ids:
+        return
+    emitted_incident_ids.add(incident.id)
     members.append({"incident_id": incident.id, "depth": depth, "trigger": trigger})
     events.extend(
         {
@@ -270,6 +276,7 @@ def _chain(
             tick=tick,
             members=members,
             events=events,
+            emitted_incident_ids=emitted_incident_ids,
         )
 
 

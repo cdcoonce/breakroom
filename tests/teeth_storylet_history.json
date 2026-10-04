@@ -1,0 +1,34 @@
+{
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_tick_incidents.py::test_storylet_min_tick_gap_persists_across_real_ticks"
+  ],
+  "mutants": [
+    {
+      "label": "Omit persisted history from context",
+      "file": "../src/breakroom/tick.py",
+      "find": "            storylet_history=state.get(\"storylet_history\", {}),",
+      "replace": "",
+      "oracle": "real"
+    },
+    {
+      "label": "Record previous day",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "    storylet_history[event[\"storylet_id\"]] = event[\"day\"]",
+      "replace": "    storylet_history[event[\"storylet_id\"]] = event[\"day\"] - 1",
+      "oracle": "real"
+    },
+    {
+      "label": "Copy read-only history into context",
+      "file": "../src/breakroom/tick.py",
+      "find": "storylet_history=state.get(\"storylet_history\", {}),",
+      "replace": "storylet_history=dict(state.get(\"storylet_history\", {})),",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The selector only reads history and reducer events update tower state, so passing a shallow copy preserves behavior."
+    }
+  ]
+}

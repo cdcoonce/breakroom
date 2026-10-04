@@ -168,7 +168,12 @@ def _expense_claim_overstated(
         return None
     incurred = claim.get("amount_incurred")
     reported = claim.get("amount_reported")
-    if not isinstance(incurred, (int, float)) or not isinstance(reported, (int, float)):
+    if (
+        isinstance(incurred, bool)
+        or not isinstance(incurred, (int, float))
+        or isinstance(reported, bool)
+        or not isinstance(reported, (int, float))
+    ):
         return None
     if reported <= incurred:
         return None
@@ -197,14 +202,15 @@ def _public_claim_omits_contributors(
         return None
     actual_set = set(actual)
     claimed_set = set(claimed)
-    if not claimed_set < actual_set:
+    omitted = actual_set - claimed_set
+    if not omitted:
         return None
     if not set(audience) & STATUS_RELEVANT_AUDIENCE:
         return None
     return {
         "character_id": record.get("character_id"),
         "work_item_id": record.get("work_item_id"),
-        "omitted_contributors": sorted(actual_set - claimed_set),
+        "omitted_contributors": sorted(omitted),
         "audience": audience,
     }
 
