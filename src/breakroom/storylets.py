@@ -71,16 +71,7 @@ KNOWN_QUALITY_TEST_FIELDS = {"quality", "operator", "value"}
 # `present` is the bare-string form: `"state:offstage"` tests presence, not equality with
 # `true`, so a scalar quality still reads as present at any value in `-3..+3`.
 VALID_OPERATORS = {"present", "eq", "gte", "lte"}
-VALID_QUALITY_NAMESPACES = {
-    "stat",
-    "trait",
-    "state",
-    "skill",
-    "value",
-    "role",
-    "rel",
-    "room",
-}
+VALID_QUALITY_NAMESPACES = {"trait", "state", "skill", "value", "role"}
 KNOWN_PARTICIPANT_FIELDS = {"slot", "source", "required", "max_count"}
 VALID_PARTICIPANT_SOURCES = {
     "incident.cleanup_owner",

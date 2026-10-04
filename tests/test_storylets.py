@@ -896,3 +896,53 @@ def test_load_registry_allows_decision_point_id_reuse_across_storylets(
 
     assert registry.storylets["shared-space-repair"].decision_points[0].id == "cleanup_choice"
     assert registry.storylets["another-storylet"].decision_points[0].id == "cleanup_choice"
+
+
+@pytest.mark.parametrize("field_name", ["required_quality_any", "forbidden_state_any"])
+@pytest.mark.parametrize("quality_form", ["string", "table"])
+@pytest.mark.parametrize(
+    ("namespace", "quality"),
+    [("stat", "stat:focus"), ("rel", "rel:rivalry"), ("room", "room:break-room")],
+)
+def test_load_registry_rejects_unsupported_quality_namespaces(
+    tmp_path: Path, field_name: str, quality_form: str, namespace: str, quality: str
+) -> None:
+    entry = f'"{quality}"' if quality_form == "string" else f'{{ quality = "{quality}" }}'
+    text = MINIMAL_STORYLET.replace(
+        'room_kinds = ["social"]', f'room_kinds = ["social"]\n{field_name} = [{entry}]'
+    )
+    world = _write_storylets(tmp_path / "tower", {"unsupported": text})
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_registry(world)
+
+    message = str(exc_info.value)
+    assert "data/storylets/unsupported.toml" in message
+    assert quality in message
+    assert "unsupported" in message
+
+
+def test_load_registry_accepts_all_supported_quality_namespaces(tmp_path: Path) -> None:
+    text = MINIMAL_STORYLET.replace(
+        'room_kinds = ["social"]',
+        '''room_kinds = ["social"]
+required_quality_any = [
+  "trait:people-pleaser",
+  { quality = "state:offstage", operator = "present" },
+  "skill:client-writing",
+  { quality = "value:honesty", operator = "eq", value = true },
+  "role:manager",
+]''',
+    )
+    world = _write_storylets(tmp_path / "tower", {"supported": text})
+
+    registry = load_registry(world)
+
+    qualities = registry.storylets["quiet-room"].eligibility.required_quality_any
+    assert [quality.quality for quality in qualities] == [
+        "trait:people-pleaser",
+        "state:offstage",
+        "skill:client-writing",
+        "value:honesty",
+        "role:manager",
+    ]
