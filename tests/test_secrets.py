@@ -655,29 +655,67 @@ def test_reveal_outcome_is_reproducible_under_seed(tmp_path: Path) -> None:
     assert outcomes[0][0] == "observable"
 
 
-def test_reveal_tags_through_norms_when_a_registry_is_present(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "registry_contents",
+    [None, NORMS_TOML, "norms = ["],
+    ids=["no-registry", "registry", "malformed-registry"],
+)
+def test_reveal_provenance_has_stable_norm_arrays_with_or_without_registry(
+    tmp_path: Path, registry_contents: str | None
+) -> None:
     world = _new_world(tmp_path)
-    (world / "data").mkdir()
-    (world / "data" / "norms.toml").write_text(NORMS_TOML, encoding="utf-8")
-    secret = _seal(world)
-    secret = advance_exposure(world, secret, seed=42, tick=4, deltas=[1.0] * 8)
+    if registry_contents is not None:
+        (world / "data").mkdir()
+        (world / "data" / "norms.toml").write_text(registry_contents, encoding="utf-8")
+    secret = _seal(world, exposure_risk=1.0)
+    log = RollLog()
 
-    maybe_reveal(world, secret, day=1, rng=RngStream(seed=42, stream="exposure", tick=4))
+    revealed = maybe_reveal(
+        world,
+        secret,
+        day=1,
+        rng=RngStream(seed=42, stream="exposure", tick=4, log=log),
+        observed_by=["alex-chen"],
+    )
 
-    provenance = _read_events(world)[0]["provenance"]
-    assert provenance["norm_tags"] == []
-    assert provenance["norm_violations"] == []
+    expected_provenance = {
+        "trigger": "exposure_threshold",
+        "exposure_risk": 1.0,
+        "tick": 4,
+        "stream": "exposure",
+        "holder": "jordan-vale",
+        "is_true": True,
+        "content": CONTENT,
+        "norm_tags": [],
+        "norm_violations": [],
+    }
+    expected_knowers = ["jordan-vale", "alex-chen"]
+    events = _read_events(world)
 
-
-def test_reveal_skips_norm_tagging_without_a_registry(tmp_path: Path) -> None:
-    world = _new_world(tmp_path)
-    secret = _seal(world)
-    secret = advance_exposure(world, secret, seed=42, tick=4, deltas=[1.0] * 8)
-
-    maybe_reveal(world, secret, day=1, rng=RngStream(seed=42, stream="exposure", tick=4))
-
-    provenance = _read_events(world)[0]["provenance"]
-    assert "norm_tags" not in provenance
+    assert revealed.state == "observable"
+    assert revealed.exposure_risk == 1.0
+    assert revealed.knowers == expected_knowers
+    assert revealed.revealed_by == {"type": "secret_reveal", "sequence": 1, "day": 1}
+    assert events == [
+        {
+            "sequence": 1,
+            "type": "secret_reveal",
+            "day": 1,
+            "secret_id": "affair-1",
+            "knowers": expected_knowers,
+            "provenance": expected_provenance,
+        }
+    ]
+    assert read_secret(world, secret.id)["state"] == "observable"
+    assert log.records == [
+        {
+            "stream": "exposure",
+            "tick": 4,
+            "purpose": "reveal",
+            "primitive": "bernoulli",
+            "result": True,
+        }
+    ]
 
 
 def test_secret_content_is_absent_from_tracked_files_until_reveal(tmp_path: Path) -> None:
