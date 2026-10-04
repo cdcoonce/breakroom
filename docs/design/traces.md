@@ -155,6 +155,22 @@ When a decision creates or modifies an event, the event log should reference the
 The event log remains readable without opening traces, but the trace log is the authoritative source
 for model attribution and context.
 
+## Incident State Effects
+
+Incident resolution retains `incident_detail` as required metadata for constructing each canonical
+`incident` receipt. At the tick boundary, `dial_delta` and `edge_delta` are the supported declared
+state effects; each is applied through the world-state reducer using its authored payload, including
+authored edge event IDs. The tick day is authoritative, while resolver tick, incident, cascade, and
+depth provenance is retained. Incident detail morale is applied before any declared morale dial
+delta, so the effects add together.
+
+For a tick with fired incidents, canonical incident receipts are applied first in incident order,
+then supported state effects in resolver order. Those effects are applied before storylet selection,
+so selection observes the updated state. The event log persists the same receipts in that order,
+followed by the selected `scene` or `quiet_day` receipt. A scene tick does not persist any of its
+receipts until narration succeeds. Replaying the complete log from the pre-tick state reproduces the
+saved state for both scene and no-storylet ticks.
+
 ## View 1: Per-Character Decision Timeline
 
 Purpose: show how one character behaves over time.
