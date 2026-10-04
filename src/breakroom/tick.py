@@ -79,7 +79,6 @@ def tick_world(world: Path) -> None:
             norm_violations.extend(tags["norm_violations"])
             incident_event.update(tags)
         incident_events.append(incident_event)
-        append_event(world, incident_event)
         state = worldstate.apply_event(state, incident_event)
 
     world_state = {
@@ -114,8 +113,28 @@ def tick_world(world: Path) -> None:
         if selection is None:
             # An empty spotlight is a legitimate outcome: no eligible storylet does not
             # mean no incidents fired, but the day still needs its receipts recorded.
+            _append_incident_events(world, incident_events)
             append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
         else:
+            spotlight_incident = None
+            room = None
+            incident_ids = selection.storylet.eligibility.incident_ids
+            if incident_ids:
+                spotlight_incident = incidents[incident_ids[0]]
+                try:
+                    room = next(
+                        room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
+                    )
+                except StopIteration:
+                    raise TickError(
+                        f"incident {spotlight_incident['id']!r} references room "
+                        f"{spotlight_incident['room']!r}, which is missing from tower state"
+                    ) from None
+
+            # Keep incident receipts in their original order, but don't make them
+            # durable until the selected spotlight room has been validated.
+            _append_incident_events(world, incident_events)
+
             character_ids: list[str] = []
             for slot in selection.storylet.participants:
                 for participant_id in selection.participants.get(slot.slot, []):
@@ -135,18 +154,6 @@ def tick_world(world: Path) -> None:
                 ) from None
             spotlight_character = loaded.characters[spotlight_character_id]
 
-            spotlight_incident_id = selection.storylet.eligibility.incident_ids[0]
-            spotlight_incident = incidents[spotlight_incident_id]
-
-            try:
-                room = next(
-                    room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
-                )
-            except StopIteration:
-                raise TickError(
-                    f"incident {spotlight_incident['id']!r} references room "
-                    f"{spotlight_incident['room']!r}, which is missing from tower state"
-                ) from None
             brief |= {
                 "character": spotlight_character,
                 "room": room,
@@ -186,6 +193,11 @@ def tick_world(world: Path) -> None:
         state["day"] = day
     jsonio.write_pretty_json(state_path, state)
     write_chronicle(world, day=day, brief=brief, prose=prose)
+
+
+def _append_incident_events(world: Path, incident_events: list[dict[str, Any]]) -> None:
+    for incident_event in incident_events:
+        append_event(world, incident_event)
 
 
 def _load_registry(world: Path) -> norms.Registry | None:

@@ -378,6 +378,12 @@ def test_strictest_permanent_cap_wins_and_a_later_scar_cannot_loosen_it() -> Non
     qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
     assert qualities["trust"]["cap"] == -5
     assert qualities["trust"]["value"] == -5
+    assert qualities["trust"]["history"][1] == {
+        "event_id": "evt-looser",
+        "delta": 8,
+        "cap": -5,
+        "floor": None,
+    }
 
 
 def test_permanent_floor_scar_holds_recovery_under_later_negative_delta() -> None:
@@ -431,6 +437,12 @@ def test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it() -> N
     qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
     assert qualities["fear"]["floor"] == 5
     assert qualities["fear"]["value"] == 5
+    assert qualities["fear"]["history"][1] == {
+        "event_id": "evt-looser",
+        "delta": -8,
+        "cap": None,
+        "floor": 5,
+    }
 
 
 def test_cap_and_floor_accumulate_independently_and_pin_value_when_equal() -> None:
@@ -480,6 +492,69 @@ def test_cap_and_floor_accumulate_independently_and_pin_value_when_equal() -> No
 
     state = apply_event(state, push_down)
     assert edge_qualities(state, "jordan-vale", "sam-oduya")["rivalry"]["value"] == 4
+
+
+@pytest.mark.parametrize(
+    ("quality", "bound_name", "bound_value", "later_delta", "expected_cap", "expected_floor"),
+    [
+        pytest.param("trust", "cap", -5, 8, -5, None, id="inherited-cap"),
+        pytest.param("fear", "floor", 5, -8, None, 5, id="inherited-floor"),
+    ],
+)
+def test_delta_only_history_keeps_inherited_bounds_and_prior_provenance(
+    quality: str,
+    bound_name: str,
+    bound_value: int,
+    later_delta: int,
+    expected_cap: int | None,
+    expected_floor: int | None,
+) -> None:
+    scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-bound",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {quality: {"delta": bound_value, bound_name: bound_value}},
+    }
+    delta_only = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-delta",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {quality: {"delta": later_delta}},
+    }
+    scarred = apply_event({"day": 0}, scar)
+    first_row = {
+        "event_id": "evt-bound",
+        "delta": bound_value,
+        "cap": expected_cap,
+        "floor": expected_floor,
+    }
+    assert edge_qualities(scarred, "jordan-vale", "sam-oduya")[quality]["history"] == [first_row]
+    assert edge_provenance(scarred, "jordan-vale", "sam-oduya", quality) == ["evt-bound"]
+
+    updated = apply_event(scarred, delta_only)
+
+    entry = edge_qualities(updated, "jordan-vale", "sam-oduya")[quality]
+    assert entry["value"] == bound_value
+    assert entry["cap"] == expected_cap
+    assert entry["floor"] == expected_floor
+    assert entry["history"] == [
+        first_row,
+        {
+            "event_id": "evt-delta",
+            "delta": later_delta,
+            "cap": expected_cap,
+            "floor": expected_floor,
+        },
+    ]
+    assert edge_qualities(scarred, "jordan-vale", "sam-oduya")[quality]["history"] == [first_row]
+    assert edge_provenance(updated, "jordan-vale", "sam-oduya", quality) == [
+        "evt-bound",
+        "evt-delta",
+    ]
 
 
 def test_single_change_with_floor_above_cap_is_rejected() -> None:
