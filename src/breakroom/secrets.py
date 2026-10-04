@@ -53,10 +53,14 @@ class Secret:
         }
 
     def public_view(self) -> dict[str, Any]:
-        """The record as it may leave this module: sealed content stays sealed."""
+        """Return metadata while keeping sealed content and is_true private.
+
+        Observable secrets include their complete original record.
+        """
         record = self.to_record()
         if self.state == "sealed":
             record.pop("content")
+            record.pop("is_true")
         return record
 
 
@@ -100,17 +104,19 @@ def advance_exposure(
     """Advance exposure risk by caller-supplied per-tick deltas.
 
     Each delta is the ceiling of pressure that event applies; the realized
-    fraction is drawn from ``RngStream(stream="exposure", tick=tick)``, so risk
-    only ever moves when the caller supplies a delta, and the same
-    ``(seed, tick, deltas)`` always yields the same risk. Result is clamped to
-    ``[0.0, 1.0]``.
+    fraction is drawn from ``RngStream(stream=f"exposure:{secret.id}",
+    tick=tick)``, so draws repeat for the same seed, secret ID, tick, and draw
+    order. Resulting risk also repeats when the same deltas are applied from
+    the same starting exposure risk on the supplied Secret handle. Risk only
+    ever moves when the caller supplies a delta, and is clamped to ``[0.0,
+    1.0]``.
     """
     store = _load_store(world)
     if secret.id not in store:
         raise ValidationError(f"unknown secret: {secret.id}")
 
     current = store[secret.id]
-    rng = RngStream(seed=seed, stream="exposure", tick=tick)
+    rng = RngStream(seed=seed, stream=f"exposure:{secret.id}", tick=tick)
     risk = secret.exposure_risk
     for index, delta in enumerate(deltas):
         risk = _clamp(risk + delta * rng.uniform(f"delta:{index}"))
@@ -204,7 +210,10 @@ def maybe_reveal(
 
 
 def read_secret(world: Path, secret_id: str) -> dict[str, Any]:
-    """Read a stored secret as public state; sealed content is never returned."""
+    """Read public state, retaining metadata and redacting sealed content/is_true.
+
+    Observable secrets include their complete original record.
+    """
     store = _load_store(world)
     record = store.get(secret_id)
     if record is None:
