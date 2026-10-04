@@ -1,0 +1,30 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_worldstate.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_worldstate.py"],
+  "mutants": [
+    {
+      "label": "write completion marker before the final starter storylet",
+      "file": "../src/breakroom/init.py",
+      "oracle": "real",
+      "find": "    for filename, body in STARTER_STORYLETS.items():\n        (world / \"data\" / \"storylets\" / filename).write_text(body, encoding=\"utf-8\")\n    (world / \"events.jsonl\").write_text(\"\", encoding=\"utf-8\")\n    jsonio.write_pretty_json(world / \"state\" / \"tower.json\", state)",
+      "replace": "    for filename, body in STARTER_STORYLETS.items():\n        if filename == \"quiet-room.toml\":\n            jsonio.write_pretty_json(world / \"state\" / \"tower.json\", state)\n        (world / \"data\" / \"storylets\" / filename).write_text(body, encoding=\"utf-8\")\n    (world / \"events.jsonl\").write_text(\"\", encoding=\"utf-8\")"
+    },
+    {
+      "label": "write completion marker before the event log",
+      "file": "../src/breakroom/init.py",
+      "oracle": "real",
+      "find": "    (world / \"events.jsonl\").write_text(\"\", encoding=\"utf-8\")\n    jsonio.write_pretty_json(world / \"state\" / \"tower.json\", state)",
+      "replace": "    jsonio.write_pretty_json(world / \"state\" / \"tower.json\", state)\n    (world / \"events.jsonl\").write_text(\"\", encoding=\"utf-8\")"
+    },
+    {
+      "label": "[control] reorder independent initial directory creation",
+      "file": "../src/breakroom/init.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Creating the two independent, exist_ok scaffold directories in reverse order leaves their final layout and subsequent writes unchanged for the tested normal/retry paths. This does not claim equivalent exception precedence if one directory path has an invalid filesystem ancestor.",
+      "find": "    (world / \"characters\").mkdir(parents=True, exist_ok=True)\n    (world / \"chronicles\").mkdir(parents=True, exist_ok=True)",
+      "replace": "    (world / \"chronicles\").mkdir(parents=True, exist_ok=True)\n    (world / \"characters\").mkdir(parents=True, exist_ok=True)"
+    }
+  ]
+}
