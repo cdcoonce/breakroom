@@ -148,9 +148,7 @@ def maybe_reveal(
     linked to the emitted ``secret_reveal`` event through ``revealed_by``, and
     that event is appended to the world's event log.
     """
-    if secret.state != "sealed" or secret.exposure_risk < REVEAL_THRESHOLD:
-        return secret
-    if not rng.bernoulli("reveal", probability=secret.exposure_risk):
+    if secret.state != "sealed":
         return secret
 
     store = _load_store(world)
@@ -158,6 +156,15 @@ def maybe_reveal(
         raise ValidationError(f"unknown secret: {secret.id}")
 
     current = store[secret.id]
+    if current["state"] != "sealed":
+        return secret
+
+    exposure_risk = current["exposure_risk"]
+    if exposure_risk < REVEAL_THRESHOLD:
+        return secret
+    if not rng.bernoulli("reveal", probability=exposure_risk):
+        return secret
+
     knowers = list(current["knowers"])
     for character_id in observed_by if observed_by is not None else []:
         if character_id not in knowers:
@@ -165,7 +172,7 @@ def maybe_reveal(
 
     provenance: dict[str, Any] = {
         "trigger": "exposure_threshold",
-        "exposure_risk": secret.exposure_risk,
+        "exposure_risk": exposure_risk,
         "tick": rng.tick,
         "stream": rng.stream,
         "holder": secret.holder,
@@ -202,7 +209,7 @@ def maybe_reveal(
         state="observable",
         knowers=knowers,
         revealed_by={"type": event["type"], "sequence": event["sequence"], "day": event["day"]},
-        exposure_risk=current["exposure_risk"],
+        exposure_risk=exposure_risk,
     )
     store[secret.id] = revealed.to_record()
     _save_store(world, store)
