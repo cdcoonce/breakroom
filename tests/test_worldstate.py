@@ -194,7 +194,13 @@ def test_replaying_event_log_reproduces_current_state(tmp_path: Path) -> None:
     assert replay_events(initial, world / "events.jsonl") == load_world(world).state
 
 
-def test_replaying_persisted_quiet_day_reproduces_tick_state(tmp_path: Path) -> None:
+def test_replaying_persisted_quiet_day_reproduces_tick_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_if_narrated(brief: dict) -> str:
+        raise AssertionError("a quiet day has no scene to narrate")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail_if_narrated)
     world = tmp_path / "tower"
     init_world(world, seed=42)
     initial = load_world(world).state
