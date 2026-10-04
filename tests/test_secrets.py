@@ -261,6 +261,31 @@ def test_advance_exposure_draws_are_bound_to_the_exposure_stream(tmp_path: Path)
     assert risks["base"] != risks["other_seed"]
 
 
+def test_advance_exposure_draws_are_bound_to_the_secret_id(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    first = _seal(world, id="affair-1", exposure_risk=0.0)
+    second = _seal(world, id="affair-2", exposure_risk=0.0)
+
+    first_risk = advance_exposure(
+        world, first, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+    second_risk = advance_exposure(
+        world, second, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+
+    assert 0.0 < first_risk < 0.3
+    assert 0.0 < second_risk < 0.3
+    assert first_risk != second_risk
+
+    repeat_world = _new_world(tmp_path, "repeat-tower")
+    repeat_start = _seal(repeat_world, id="affair-1", exposure_risk=0.0)
+    repeated_risk = advance_exposure(
+        repeat_world, repeat_start, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+
+    assert repeated_risk == first_risk
+
+
 def test_advance_exposure_persists_to_the_sealed_store(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world)
@@ -373,10 +398,10 @@ def test_maybe_reveal_preserves_exposure_risk_advanced_through_a_stale_handle(
 ) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world)
-    first_handle = advance_exposure(world, secret, seed=1, tick=1, deltas=[1.0] * 4)
+    first_handle = advance_exposure(world, secret, seed=6, tick=1, deltas=[1.0])
     assert REVEAL_THRESHOLD <= first_handle.exposure_risk < 1.0
 
-    second_handle = advance_exposure(world, first_handle, seed=1, tick=2, deltas=[1.0] * 4)
+    second_handle = advance_exposure(world, first_handle, seed=6, tick=2, deltas=[1.0])
     assert second_handle.exposure_risk > first_handle.exposure_risk
 
     revealed = maybe_reveal(
