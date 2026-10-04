@@ -49,8 +49,8 @@
       "label": "[must-kill] make returned registry writable",
       "file": "../src/breakroom/economy.py",
       "oracle": "real",
-      "find": "self._definitions = MappingProxyType(dict(definitions))",
-      "replace": "self._definitions = dict(definitions)"
+      "find": "    return ThresholdRegistry(definitions)\n\n\ndef _load_bundled_thresholds",
+      "replace": "    return definitions\n\n\ndef _load_bundled_thresholds"
     },
     {
       "label": "[must-kill] map threshold definitions to Budget regardless of configured dial",

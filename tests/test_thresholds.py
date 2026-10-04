@@ -47,7 +47,7 @@ def test_bundled_defaults_trip_and_order_without_cwd_lookup(tmp_path: Path, monk
     api = thresholds_api()
     decoy = tmp_path / "cwd" / "data" / "thresholds"
     _write_threshold(decoy, "morale_crisis", dial="morale", trip=90, rearm=95)
-    monkeypatch.chdir(decoy.parents[2])
+    monkeypatch.chdir(decoy.parents[1])
 
     registry = api.load_thresholds(tmp_path / "world-without-thresholds")
     events, active = api.check_thresholds({"morale": 20, "budget": 250}, frozenset())
