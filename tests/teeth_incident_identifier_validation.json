@@ -1,0 +1,36 @@
+{
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_incidents.py",
+    "-k", "non_string_or_empty_id or bool_int_id_collision or non_string_or_empty_chain_target"
+  ],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_incidents.py"],
+  "mutants": [
+    {
+      "label": "remove incident id string-and-nonempty guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(incident_id, str) or not incident_id:",
+      "replace": "if False:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "The loader must reject numeric, boolean, and empty incident IDs before duplicate lookup, including Python's bool/int key collision."
+    },
+    {
+      "label": "remove chain target string-and-nonempty guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(target, str) or not target:",
+      "replace": "if False:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "The loader must reject non-string and empty targets as ValidationError, including unhashable list targets."
+    },
+    {
+      "label": "equivalent incident id predicate order",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if not isinstance(incident_id, str) or not incident_id:",
+      "replace": "if not incident_id or not isinstance(incident_id, str):",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Harmless control: reversing these short-circuit checks preserves rejection and acceptance behavior."
+    }
+  ]
+}
