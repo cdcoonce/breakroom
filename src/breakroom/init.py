@@ -180,7 +180,6 @@ def init_world(world: Path, seed: int) -> None:
         ],
         "characters": ["jordan-vale"],
     }
-    jsonio.write_pretty_json(world / "state" / "tower.json", state)
     (world / "characters" / "jordan-vale.toml").write_text(
         STARTER_CHARACTER, encoding="utf-8"
     )
@@ -189,3 +188,4 @@ def init_world(world: Path, seed: int) -> None:
     for filename, body in STARTER_STORYLETS.items():
         (world / "data" / "storylets" / filename).write_text(body, encoding="utf-8")
     (world / "events.jsonl").write_text("", encoding="utf-8")
+    jsonio.write_pretty_json(world / "state" / "tower.json", state)
