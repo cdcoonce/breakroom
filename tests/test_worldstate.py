@@ -126,6 +126,20 @@ def test_replaying_event_log_reproduces_current_state(tmp_path: Path) -> None:
     assert replay_events(initial, world / "events.jsonl") == load_world(world).state
 
 
+def test_replay_events_reports_malformed_json_file_and_physical_line(tmp_path: Path) -> None:
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text("\n{not json}\n", encoding="utf-8")
+    checkout_root = Path(__file__).resolve().parents[1]
+
+    with pytest.raises(ValidationError) as error:
+        replay_events({"day": 0}, events_path)
+
+    reported_path, _, detail = str(error.value).partition(": ")
+    assert not Path(reported_path).is_absolute()
+    assert (checkout_root / reported_path).resolve() == events_path.resolve()
+    assert detail.startswith("line 2:")
+
+
 def test_snapshot_write_load_compare_is_lossless(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
