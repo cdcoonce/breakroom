@@ -156,6 +156,61 @@ def test_read_secret_redacts_content_while_sealed(tmp_path: Path) -> None:
     assert public["holder"] == "jordan-vale"
 
 
+@pytest.mark.parametrize("truth", [True, False], ids=["true-secret", "false-secret"])
+def test_public_views_hide_truth_until_reveal_without_changing_private_records(
+    tmp_path: Path, truth: bool
+) -> None:
+    world = _new_world(tmp_path)
+    secret = _seal(world, is_true=truth, exposure_risk=1.0, knowers=["jordan-vale", "alex-chen"])
+    metadata = {
+        "id": "affair-1",
+        "holder": "jordan-vale",
+        "exposure_risk": 1.0,
+        "knowers": ["jordan-vale", "alex-chen"],
+        "state": "sealed",
+        "revealed_by": None,
+    }
+    private_record = {**metadata, "content": CONTENT, "is_true": truth}
+    store = _store_path(world)
+    sealed_bytes = store.read_bytes()
+
+    # Evaluate both entry points even if the first view violates the boundary.
+    sealed_views = (secret.public_view(), read_secret(world, secret.id))
+
+    for view in sealed_views:
+        assert "content" not in view
+        assert "is_true" not in view
+        assert view == metadata
+    assert secret.to_record() == private_record
+    assert secret.to_record()["is_true"] is truth
+    assert json.loads(store.read_text())[secret.id] == private_record
+    assert json.loads(store.read_text())[secret.id]["is_true"] is truth
+    assert store.read_bytes() == sealed_bytes
+
+    observable = maybe_reveal(
+        world, secret, day=1, rng=RngStream(seed=42, stream="exposure", tick=1)
+    )
+    assert observable.state == "observable"
+    observable_record = {
+        **private_record,
+        "state": "observable",
+        "revealed_by": {"type": "secret_reveal", "sequence": 1, "day": 1},
+    }
+    observable_bytes = store.read_bytes()
+
+    observable_views = (observable.public_view(), read_secret(world, observable.id))
+
+    for view in observable_views:
+        assert view == observable_record
+        assert view["content"] == CONTENT
+        assert view["is_true"] is truth
+    assert observable.to_record() == observable_record
+    assert observable.to_record()["is_true"] is truth
+    assert json.loads(store.read_text())[observable.id] == observable_record
+    assert json.loads(store.read_text())[observable.id]["is_true"] is truth
+    assert store.read_bytes() == observable_bytes
+
+
 def test_advance_exposure_only_moves_risk_when_deltas_are_supplied(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world, exposure_risk=0.25)
