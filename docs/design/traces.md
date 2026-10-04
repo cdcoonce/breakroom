@@ -183,6 +183,34 @@ configuration changes do not reinterpret it. On scene branches, tick persistence
 narration to succeed; no-narration quiet and no-selected-storylet branches append payroll first
 with their normal receipts without calling the narrator.
 
+## Contract Lifecycle Receipts
+
+Contract definitions live in `data/contracts.toml`; new worlds receive a copy, while an older
+world with no override loads the packaged resource. A present invalid override fails closed. Every
+tick makes one `contract_offer` Bernoulli record on the independent `contract_offers` stream. A
+successful draw adds a `contract_offer` event with a stable day ID, expiry day, client, and complete
+terms snapshot. The tick then emits `contract_expired` events by offer ID before processing active
+contracts by contract ID. The payroll `dial_delta` remains first, and contract receipts precede the
+existing incident, effect, and scene/quiet-day receipts.
+
+`contract_accepted` freezes a unique team, work-room assignment, acceptance day, and the offer's
+terms. `contract_progress` stores the work delta, cumulative progress, team focus values, actual
+room ID/kind, required room kind, and fit factor. Replay applies these stored values; it does not
+look up current character stats or configuration. An incomplete contract may emit each configured
+`contract_pressure` level once as its remaining deadline approaches. Completion emits a
+`dial_delta` receipt with `source = "contract_completion"`, contract ID, amount, terms, day, and
+`dial_movement` v1 metadata, followed by `contract_completed`. A miss emits due pressure first,
+then the corresponding `contract_miss` dial receipt and `contract_missed`. Completion on the
+inclusive deadline takes precedence over miss.
+
+Offer, acceptance, decline, expiry, progress, pressure, completion, and miss events update the
+`contracts` registry without independently advancing the world day. Existing day-bearing incident,
+scene, and quiet-day events advance the day as before. List/accept/decline commands require no model
+call; successful accept/decline appends one transition and saves the reduced tower state. Invalid
+commands fail before either write. For narrated ticks, payroll, contract, incident, effect, and scene
+receipts remain staged until narration succeeds; quiet and no-selected-storylet ticks persist their
+contract receipts in their normal order without calling the narrator.
+
 ## Incident State Effects
 
 Incident resolution retains `incident_detail` as required metadata for constructing each canonical

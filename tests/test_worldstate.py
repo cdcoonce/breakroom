@@ -1456,3 +1456,171 @@ def test_noncanonical_unicode_escape_spelling_is_rejected_consistently(tmp_path:
     tower_path.write_text(json.dumps(tower), encoding="utf-8")
     with pytest.raises(ValidationError, match="canonical string pair"):
         load_world(world)
+
+
+def _offer_state_for_expiry_test() -> tuple[dict, dict, dict]:
+    initial = {
+        "day": 1,
+        "budget": 0,
+        "morale": 50,
+        "reputation": 50,
+        "rooms": [],
+        "characters": [],
+    }
+    offer = {
+        "type": "contract_offer",
+        "day": 1,
+        "offer_id": "offer-expiry-boundary",
+        "created_day": 1,
+        "expires_day": 4,
+        "client": "Client",
+        "terms": {
+            "required_work_units": 2,
+            "duration_ticks": 3,
+            "required_room_kind": "work",
+            "payout_budget": 40,
+            "miss_penalty_budget": 20,
+            "miss_penalty_reputation": 5,
+            "pressure_milestones": [],
+        },
+    }
+    return initial, offer, apply_event(initial, offer)
+
+
+def _contract_transition_event(offer: dict, event_type: str, day: int) -> dict:
+    event = {
+        "type": event_type,
+        "day": day,
+        "contract_id": offer["offer_id"],
+    }
+    if event_type == "contract_expired":
+        event.pop("contract_id")
+        event["offer_id"] = offer["offer_id"]
+    elif event_type == "contract_accepted":
+        event.update(
+            team_ids=["worker"],
+            work_room_id="room",
+            terms=offer["terms"],
+        )
+    return event
+
+
+@pytest.mark.parametrize(
+    ("event_type", "event_day"),
+    [
+        ("contract_accepted", 4),
+        ("contract_accepted", 6),
+        ("contract_declined", 4),
+        ("contract_declined", 6),
+        ("contract_expired", 3),
+    ],
+)
+def test_contract_offer_transitions_enforce_frozen_expiry_day_in_reducer(
+    event_type: str, event_day: int
+) -> None:
+    initial, offer, offered = _offer_state_for_expiry_test()
+    initial_before = json.loads(json.dumps(initial))
+    offered_before = json.loads(json.dumps(offered))
+    event = _contract_transition_event(offer, event_type, event_day)
+    event_before = json.loads(json.dumps(event))
+    message = (
+        r"has not expired until day 4"
+        if event_type == "contract_expired"
+        else r"expired on day 4"
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        apply_event(offered, event)
+
+    assert initial == initial_before
+    assert offered == offered_before
+    assert event == event_before
+
+
+@pytest.mark.parametrize(
+    ("event_type", "event_day"),
+    [
+        ("contract_accepted", 4),
+        ("contract_accepted", 6),
+        ("contract_declined", 4),
+        ("contract_declined", 6),
+        ("contract_expired", 3),
+    ],
+)
+def test_replay_enforces_frozen_contract_offer_expiry_day(
+    tmp_path: Path, event_type: str, event_day: int
+) -> None:
+    initial, offer, _offered = _offer_state_for_expiry_test()
+    initial_before = json.loads(json.dumps(initial))
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                offer,
+                _contract_transition_event(offer, event_type, event_day),
+            )
+        ),
+        encoding="utf-8",
+    )
+    message = (
+        r"has not expired until day 4"
+        if event_type == "contract_expired"
+        else r"expired on day 4"
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        replay_events(initial, events_path)
+
+    assert initial == initial_before
+
+
+@pytest.mark.parametrize(
+    ("event_type", "event_day", "expected_status"),
+    [
+        ("contract_accepted", 3, "accepted"),
+        ("contract_declined", 3, "declined"),
+        ("contract_expired", 4, "expired"),
+        ("contract_expired", 6, "expired"),
+    ],
+)
+def test_contract_offer_transitions_accept_valid_frozen_expiry_boundaries(
+    event_type: str, event_day: int, expected_status: str
+) -> None:
+    _initial, offer, offered = _offer_state_for_expiry_test()
+
+    transitioned = apply_event(
+        offered, _contract_transition_event(offer, event_type, event_day)
+    )
+
+    assert transitioned["contracts"][offer["offer_id"]]["status"] == expected_status
+
+
+@pytest.mark.parametrize(
+    ("event_type", "event_day", "expected_status"),
+    [
+        ("contract_accepted", 3, "accepted"),
+        ("contract_declined", 3, "declined"),
+        ("contract_expired", 4, "expired"),
+        ("contract_expired", 6, "expired"),
+    ],
+)
+def test_replay_accepts_valid_frozen_contract_offer_expiry_boundaries(
+    tmp_path: Path, event_type: str, event_day: int, expected_status: str
+) -> None:
+    initial, offer, _offered = _offer_state_for_expiry_test()
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                offer,
+                _contract_transition_event(offer, event_type, event_day),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    replayed = replay_events(initial, events_path)
+
+    assert replayed["contracts"][offer["offer_id"]]["status"] == expected_status

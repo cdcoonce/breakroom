@@ -1,0 +1,201 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py",
+    "tests/test_contracts.py",
+    "tests/test_tick_contracts.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py",
+    "tests/test_contracts.py",
+    "tests/test_tick_contracts.py"
+  ],
+  "mutants": [
+    {
+      "label": "[must-kill] ignore current reputation when computing offer probability",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "probability = min(100, max(0, state[\"reputation\"])) * config[",
+      "replace": "probability = 100 * config["
+    },
+    {
+      "label": "[must-kill] share the incidents stream with contract offers",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "stream=\"contract_offers\"",
+      "replace": "stream=\"incidents\""
+    },
+    {
+      "label": "[must-kill] average focus instead of summing assigned teammates",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "work = sum(team_focus.values()) * factor",
+      "replace": "work = sum(team_focus.values()) / len(team_focus) * factor"
+    },
+    {
+      "label": "[must-kill] ignore room mismatch factor",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "factor = contract[\"terms\"][\n            \"matching_room_factor\" if room[\"kind\"] == required_kind else \"mismatching_room_factor\"\n        ]",
+      "replace": "factor = contract[\"terms\"][\"matching_room_factor\"]"
+    },
+    {
+      "label": "[must-kill] expire offers only after their inclusive expiry day",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "day >= record[\"expires_day\"]",
+      "replace": "day > record[\"expires_day\"]"
+    },
+    {
+      "label": "[must-kill] make completion strict rather than inclusive",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if progress >= contract[\"terms\"][\"required_work_units\"]:",
+      "replace": "if progress > contract[\"terms\"][\"required_work_units\"]:"
+    },
+    {
+      "label": "[must-kill] delay miss settlement past the inclusive deadline",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if day >= contract[\"deadline_day\"]:",
+      "replace": "if day > contract[\"deadline_day\"]:"
+    },
+    {
+      "label": "[must-kill] change the completion receipt provenance",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "\"source\": \"contract_completion\"",
+      "replace": "\"source\": \"completion\""
+    },
+    {
+      "label": "[must-kill] apply completion movement twice",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "state = move_dial(state, settlement, rulebook=rulebook)\n            events.append(settlement)\n            terminal = {\"type\": \"contract_completed\"",
+      "replace": "state = move_dial(state, settlement, rulebook=rulebook)\n            state = move_dial(state, settlement, rulebook=rulebook)\n            events.append(settlement)\n            terminal = {\"type\": \"contract_completed\""
+    },
+    {
+      "label": "[must-kill] recompute cumulative progress from only the latest delta",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "record[\"progress\"] = progress",
+      "replace": "record[\"progress\"] = delta"
+    },
+    {
+      "label": "[must-kill] omit the empty legacy contract registry from empty-log replay",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    state.setdefault(\"contracts\", {})\n    for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):",
+      "replace": "    for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):"
+    },
+    {
+      "label": "[must-kill] allow pressure after a contract completes",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "events.append(terminal)\n            continue\n        remaining = contract[\"deadline_day\"] - day",
+      "replace": "events.append(terminal)\n        remaining = contract[\"deadline_day\"] - day"
+    },
+    {
+      "label": "[must-kill] accept or decline an offer on or after frozen expiry",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "if event_day >= expires_day:",
+      "replace": "if False:"
+    },
+    {
+      "label": "[must-kill] expire an offer before its frozen expiry day",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "elif event_day < expires_day:",
+      "replace": "elif False:"
+    },
+    {
+      "label": "[must-kill] use pre-transition state day instead of event day",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "event_day = event.get(\"day\")",
+      "replace": "event_day = state.get(\"day\")"
+    },
+    {
+      "label": "[must-kill] append payroll before narrator success",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            prose = render_scene(brief)",
+      "replace": "            append_event(world, payroll)\n            prose = render_scene(brief)"
+    },
+    {
+      "label": "[must-kill] write incident receipts before contract phase receipts",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            append_event(world, payroll)\n            _append_contract_events(world, contract_events)\n            _append_incident_events(world, incident_events)\n            scene_event: dict[str, Any] = {",
+      "replace": "            append_event(world, payroll)\n            _append_incident_events(world, incident_events)\n            _append_contract_events(world, contract_events)\n            scene_event: dict[str, Any] = {"
+    },
+    {
+      "label": "[must-kill] fall back when a present override is not a regular file",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if _path_entry_exists(override):",
+      "replace": "if override.is_file():"
+    },
+    {
+      "label": "[must-kill] resolve the bundled default from the current directory",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "text = files(\"breakroom\").joinpath(\"data/contracts.toml\").read_text(encoding=\"utf-8\")",
+      "replace": "text = (Path.cwd() / \"src/breakroom/data/contracts.toml\").read_text(encoding=\"utf-8\")"
+    },
+    {
+      "label": "[must-kill] accept booleans as finite contract amounts",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if isinstance(value, bool) or not isinstance(value, (int, float)):",
+      "replace": "if not isinstance(value, (int, float)):"
+    },
+    {
+      "label": "[must-kill] allow nonfinite required work and settlement values",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if isinstance(value, float) and not math.isfinite(value):\n        raise ValidationError(f\"{context} must be a finite int or float\")",
+      "replace": "if False:\n        raise ValidationError(f\"{context} must be a finite int or float\")"
+    },
+    {
+      "label": "[must-kill] accept boolean offer lifetime as an integer",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if isinstance(lifetime, bool) or not isinstance(lifetime, int) or lifetime <= 0:",
+      "replace": "if not isinstance(lifetime, int) or lifetime <= 0:"
+    },
+    {
+      "label": "[must-kill] accept unreachable duration-day pressure milestones",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "            or not 0 <= remaining < value[\"duration_ticks\"]\n            or remaining in seen_days\n            or remaining >= previous",
+      "replace": "            or remaining in seen_days\n            or remaining > previous"
+    },
+    {
+      "label": "[must-kill] include bundled contract data in the installed wheel",
+      "file": "../pyproject.toml",
+      "oracle": "real",
+      "find": "packages = [\"src/breakroom\"]",
+      "replace": "packages = [\"src/breakroom\"]\nexclude = [\"**/data/contracts.toml\"]"
+    },
+    {
+      "label": "[control] reorder independent keyed fields in a progress receipt",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The progress receipt is a keyed JSON object; team_focus and work_room_id are independent fields, and the event writer sorts keys. Reordering these entries cannot change state or persisted bytes on this path.",
+      "find": "            \"team_focus\": team_focus,\n            \"work_room_id\": room[\"id\"],",
+      "replace": "            \"work_room_id\": room[\"id\"],\n            \"team_focus\": team_focus,"
+    }
+  ]
+}
