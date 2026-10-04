@@ -179,6 +179,7 @@ def init_world(world: Path, seed: int) -> None:
             {"id": "open-office", "name": "Open Office", "kind": "work", "floor": 1},
         ],
         "characters": ["jordan-vale"],
+        "edge_key_encoding": "json-pair-v1",
     }
     (world / "characters" / "jordan-vale.toml").write_text(
         STARTER_CHARACTER, encoding="utf-8"

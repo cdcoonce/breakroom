@@ -171,6 +171,28 @@ followed by the selected `scene` or `quiet_day` receipt. A scene tick does not p
 receipts until narration succeeds. Replaying the complete log from its corresponding initial state
 reproduces the saved state for both scene and no-storylet ticks.
 
+## Relationship Edge Persistence
+
+Persisted world states identify their relationship-edge key format with the top-level
+`edge_key_encoding` field. New worlds and normalized writes use `json-pair-v1`; each key is
+the canonical compact JSON encoding of exactly two string character IDs, for example
+`["a->b","c"]`. The encoding uses `json.dumps([from_id, to_id], separators=(",", ":"),
+ensure_ascii=True)`, including its ASCII escaping. The two endpoints remain separate fields in
+each `edge_delta` event.
+
+A state without the marker is legacy v0. Legacy reads retain the historical first-delimiter
+interpretation: `a->b->c` means the pair `(a, b->c)`. Loading a legacy tower or snapshot is
+read-only and does not rewrite its bytes. Reducer, replay, tick, and snapshot writes normalize a
+copy to v1 before persisting or returning canonical state. Unknown explicit markers fail
+validation; readers never infer the format from a key prefix or its syntax. Persisted v1 keys must
+be byte-for-byte canonical. Malformed or noncanonical keys fail with `ValidationError` before
+point reads, enumeration, tower load, or snapshot load.
+
+Migration preserves the pair obtained from each legacy key's first split. A legacy key cannot
+reveal whether it originally came from `(a->b, c)` instead, and values or history already merged
+under one legacy key cannot be separated. Existing event logs do not declare a complete initial
+state, so replay is not used to guess or reconstruct that lost information.
+
 ## View 1: Per-Character Decision Timeline
 
 Purpose: show how one character behaves over time.

@@ -36,7 +36,7 @@ def test_write_snapshot_calls_write_pretty_json(tmp_path: Path, monkeypatch) -> 
     assert len(calls) == 1
     written_path, written_obj = calls[0]
     assert written_path == world / "snapshots" / "day-0000.json"
-    assert written_obj == state
+    assert written_obj == {"day": 0, "edge_key_encoding": "json-pair-v1"}
 
 
 def test_init_world_calls_write_pretty_json(tmp_path: Path, monkeypatch) -> None:
@@ -50,6 +50,7 @@ def test_init_world_calls_write_pretty_json(tmp_path: Path, monkeypatch) -> None
     written_path, written_obj = calls[0]
     assert written_path == world / "state" / "tower.json"
     assert written_obj["seed"] == 42
+    assert written_obj["edge_key_encoding"] == "json-pair-v1"
 
 
 def test_tick_world_calls_write_pretty_json(tmp_path: Path, monkeypatch) -> None:
