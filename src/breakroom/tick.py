@@ -11,6 +11,7 @@ from breakroom.resolution.incidents import evaluate_tick, load_incident_table
 from breakroom.resolution.rng import RollLog
 
 QUIET_DAY_PROSE = "No incident fired today. The tower kept to itself."
+FIRED_INCIDENTS_PROSE = "Incidents fired today."
 
 
 class TickError(ValueError):
@@ -185,7 +186,9 @@ def tick_world(world: Path) -> None:
         # advance `state["day"]`. This is the only case where that's still needed.
         state["day"] = day
     jsonio.write_pretty_json(state_path, state)
-    write_chronicle(world, day=day, brief=brief, prose=prose)
+    write_chronicle(
+        world, day=day, brief=brief, prose=prose, incidents_fired=bool(fired_ids)
+    )
 
 
 def _load_registry(world: Path) -> norms.Registry | None:
@@ -199,15 +202,26 @@ def _load_registry(world: Path) -> norms.Registry | None:
     return norms.load_registry(world)
 
 
-def write_chronicle(world: Path, day: int, brief: dict[str, Any], prose: str | None) -> None:
-    """Write the day's episode. `prose` is None on a quiet day (no spotlight scene).
+def write_chronicle(
+    world: Path,
+    day: int,
+    brief: dict[str, Any],
+    prose: str | None,
+    incidents_fired: bool,
+) -> None:
+    """Write the day's episode, distinguishing no scene from no incident.
 
     The episode is written either way: every workday ends in a chronicle, so a quiet
-    day has to leave a file behind rather than look like a tick that never ran.
+    day has to leave a file behind rather than look like a tick that never ran. When
+    incidents fired without an eligible storylet, use a factual status line instead of
+    the no-incident text.
     """
     chronicle = world / "chronicles" / f"day-{day:04d}.md"
+    episode_prose = prose
+    if episode_prose is None:
+        episode_prose = FIRED_INCIDENTS_PROSE if incidents_fired else QUIET_DAY_PROSE
     chronicle.write_text(
-        f"# Day {day:04d}\n\n{QUIET_DAY_PROSE if prose is None else prose}\n\n"
+        f"# Day {day:04d}\n\n{episode_prose}\n\n"
         "## Trace\n\n"
         f"brief:\n```json\n{json.dumps(brief, indent=2, sort_keys=True)}\n```\n",
         encoding="utf-8",
