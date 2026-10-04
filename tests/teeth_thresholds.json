@@ -46,6 +46,13 @@
       "replace": "    definitions = _validated_threshold_registry(registry)\n    state['morale'] = state['morale'] + 1\n"
     },
     {
+      "label": "[must-kill] mutate a caller-injected mutable registry",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    definitions = _validated_threshold_registry(registry)\n",
+      "replace": "    registry['unexpected'] = ThresholdDefinition(dial='morale', trip=5, rearm=9)\n    definitions = _validated_threshold_registry(registry)\n"
+    },
+    {
       "label": "[must-kill] make returned registry writable",
       "file": "../src/breakroom/economy.py",
       "oracle": "real",

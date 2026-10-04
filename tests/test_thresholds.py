@@ -144,6 +144,18 @@ def test_threshold_engine_is_pure_and_preserves_frozen_active_when_unchanged(
         registry["mutated"] = api.ThresholdDefinition(dial="morale", trip=1, rearm=2)
 
 
+def test_check_thresholds_does_not_mutate_injected_mutable_mapping() -> None:
+    api = thresholds_api()
+    registry = {"custom_alert": api.ThresholdDefinition(dial="morale", trip=5, rearm=9)}
+    original_registry = dict(registry)
+
+    events, active = api.check_thresholds({"morale": 7}, frozenset(), thresholds=registry)
+
+    assert events == []
+    assert active == frozenset()
+    assert registry == original_registry
+
+
 @pytest.mark.parametrize(
     "contents",
     [
