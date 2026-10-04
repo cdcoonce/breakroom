@@ -102,6 +102,13 @@
       "replace": "    if False:\n        raise ValidationError(f\"{directory}: threshold registry cannot be empty\")"
     },
     {
+      "label": "[must-kill] treat a dangling threshold-directory symlink as absent",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if not directory.exists() and not directory.is_symlink():",
+      "replace": "if not directory.exists():"
+    },
+    {
       "label": "[must-kill] resolve default thresholds through the current working directory",
       "file": "../src/breakroom/economy.py",
       "oracle": "real",
@@ -120,9 +127,9 @@
       "file": "../src/breakroom/data/thresholds/morale_crisis.toml",
       "oracle": "real",
       "expect": "survived",
-      "why": "TOML comments and key order are syntactic presentation only; parsing yields the same three-field threshold definition, so the registry, event transitions, and installed-wheel defaults remain unchanged.",
+      "why": "TOML comments, whitespace around assignments, and key order are syntactic presentation only; parsing yields the same three-field threshold definition, so the registry, event transitions, and installed-wheel defaults remain unchanged.",
       "find": "dial = \"morale\"\ntrip = 20\nrearm = 30\n",
-      "replace": "# Equivalent formatting; semantics are unchanged.\nrearm = 30\ndial = \"morale\"\ntrip = 20\n"
+      "replace": "# Equivalent formatting; semantics are unchanged.\nrearm   =  30\ndial  =  \"morale\"\ntrip =    20\n"
     }
   ]
 }

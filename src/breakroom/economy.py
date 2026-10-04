@@ -52,7 +52,7 @@ class ThresholdRegistry(Mapping[str, ThresholdDefinition]):
 def load_thresholds(world: Path) -> ThresholdRegistry:
     """Load a complete world threshold registry, or use the bundled defaults."""
     directory = world / "data" / "thresholds"
-    if not directory.exists():
+    if not directory.exists() and not directory.is_symlink():
         return _load_bundled_thresholds()
     if not directory.is_dir():
         raise ValidationError(f"{directory}: threshold configuration must be a directory")
