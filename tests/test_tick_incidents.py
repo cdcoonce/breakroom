@@ -270,6 +270,66 @@ def test_a_quiet_day_never_calls_the_narrator(tmp_path: Path, monkeypatch) -> No
     assert main(["tick", "--world", str(world)]) == 0
 
 
+def test_storylet_min_tick_gap_persists_across_real_ticks(tmp_path: Path, stub_narrator) -> None:
+    from breakroom.tick import tick_world
+    from breakroom.worldstate import load_world
+
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+
+    state_path = world / "state" / "tower.json"
+    older_state = json.loads(state_path.read_text())
+    older_state.pop("storylet_history", None)
+    state_path.write_text(json.dumps(older_state), encoding="utf-8")
+    assert "storylet_history" not in load_world(world).state
+
+    # A pre-upgrade event log is not a source for backfilling this optional map.
+    old_scene = {"type": "scene", "day": 0, "storylet_id": "shared-space-repair"}
+    (world / "events.jsonl").write_text(json.dumps(old_scene) + "\n", encoding="utf-8")
+
+    storylet_dir = world / "data" / "storylets"
+    for storylet_path in storylet_dir.glob("*.toml"):
+        storylet_path.unlink()
+    (storylet_dir / "shared-space-repair.toml").write_text(
+        '''
+id = "shared-space-repair"
+title = "Shared Space Repair"
+premise = "A small mess tests shared responsibility."
+kind = "incident_response"
+
+[eligibility]
+incident_ids = ["coffee-spill"]
+min_tick_gap = 3
+
+[[participants]]
+slot = "cleanup_owner"
+source = "incident.cleanup_owner"
+required = true
+
+[[decision_points]]
+id = "shared-space-repair-response"
+decision_type = "incident_response"
+character_slot = "cleanup_owner"
+''',
+        encoding="utf-8",
+    )
+
+    expected_history = {"shared-space-repair": 1}
+    for day in range(1, 5):
+        # Each production tick reloads the persisted tower state.
+        assert load_world(world).state["day"] == day - 1
+        tick_world(world)
+        state = json.loads(state_path.read_text())
+        if day < 4:
+            assert state["storylet_history"] == expected_history
+        else:
+            assert state["storylet_history"] == {"shared-space-repair": 4}
+
+    assert [
+        event["day"] for event in events_of(world, "scene") if event["day"] > 0
+    ] == [1, 4]
+
+
 def test_morale_reflects_the_sum_of_every_fired_incidents_delta(
     tmp_path: Path, stub_narrator
 ) -> None:

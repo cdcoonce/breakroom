@@ -126,6 +126,8 @@ def _apply_scene_spotlight(state: dict[str, Any], event: dict[str, Any]) -> None
     spotlight_history = state.setdefault("spotlight_history", {})
     for character_id in character_ids:
         spotlight_history[character_id] = event["day"]
+    storylet_history = state.setdefault("storylet_history", {})
+    storylet_history[event["storylet_id"]] = event["day"]
 
 
 def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
