@@ -1,0 +1,43 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py"
+  ],
+  "mutants": [
+    {
+      "label": "remove dial delta numeric type guard",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "if isinstance(delta, bool) or not isinstance(delta, (int, float)):\n                raise ValidationError(f\"dial_delta event: {dial} delta must be an int or float\")",
+      "replace": "if False:\n                raise ValidationError(f\"dial_delta event: {dial} delta must be an int or float\")"
+    },
+    {
+      "label": "allow boolean dial deltas",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "if isinstance(delta, bool) or not isinstance(delta, (int, float)):",
+      "replace": "if not isinstance(delta, (int, float)):"
+    },
+    {
+      "label": "[control] evaluate both pure type predicates",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Both operands are side-effect-free booleans, so eager boolean OR preserves the guard result for every delta.",
+      "find": "if isinstance(delta, bool) or not isinstance(delta, (int, float)):",
+      "replace": "if (isinstance(delta, bool)) | (not isinstance(delta, (int, float))):"
+    }
+  ]
+}

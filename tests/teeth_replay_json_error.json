@@ -1,0 +1,23 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_worldstate.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_worldstate.py"],
+  "mutants": [
+    {
+      "label": "raw JSON parser error escapes replay_events",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "        try:\n            event = json.loads(line)\n        except json.JSONDecodeError as exc:\n            checkout_root = Path(__file__).resolve().parents[2]\n            relative_path = events_path.resolve().relative_to(checkout_root, walk_up=True)\n            raise ValidationError(\n                f\"{relative_path}: line {line_number}: invalid JSON\"\n            ) from exc\n",
+      "replace": "        event = json.loads(line)\n"
+    },
+    {
+      "label": "[control] use another malformed JSON token",
+      "file": "test_worldstate.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Both fixture strings are malformed JSON; changing their spelling preserves the malformed-line contract and should leave the focused suite green.",
+      "find": "events_path.write_text(\"\\n{not json}\\n\", encoding=\"utf-8\")",
+      "replace": "events_path.write_text(\"\\nnot json\\n\", encoding=\"utf-8\")"
+    }
+  ]
+}
