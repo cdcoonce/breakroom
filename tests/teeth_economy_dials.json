@@ -1,0 +1,80 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_economy.py", "tests/test_worldstate.py", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_economy.py", "tests/test_worldstate.py", "tests/test_tick_incidents.py"],
+  "mutants": [
+    {
+      "label": "[must-kill] incident reducer bypasses the dial mutator",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "        if not isinstance(incident, dict):\n            raise ValidationError(\"incident event: incident must be an object\")\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])\n        from breakroom.economy import move_dial\n\n        next_state = move_dial(\n            next_state,\n            event,\n            legacy_unclamped=\"dial_movement\" not in event,\n        )",
+      "replace": "        if not isinstance(incident, dict):\n            raise ValidationError(\"incident event: incident must be an object\")\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])\n        next_state[\"morale\"] += event.get(\"incident\", {}).get(\"morale_delta\", 0)"
+    },
+    {
+      "label": "[must-kill] dial_delta reducer writes dynamically outside the mutator",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    elif event_type == \"dial_delta\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])\n        from breakroom.economy import move_dial\n\n        next_state = move_dial(\n            next_state,\n            event,\n            legacy_unclamped=\"dial_movement\" not in event,\n        )",
+      "replace": "    elif event_type == \"dial_delta\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])\n        for dial, delta in event[\"dials\"].items():\n            next_state[dial] += delta"
+    },
+    {
+      "label": "[must-kill] resolver mutates its event input",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    result = copy.deepcopy(event)",
+      "replace": "    result = event"
+    },
+    {
+      "label": "[must-kill] reducer mutates its state input",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    else:\n        movement = _validate_movement(event[_MOVEMENT_KEY])\n\n    result = copy.deepcopy(state)",
+      "replace": "    else:\n        movement = _validate_movement(event[_MOVEMENT_KEY])\n\n    result = state"
+    },
+    {
+      "label": "[must-kill] v1 replay re-resolves source amounts under current rules",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        movement = _validate_movement(event[_MOVEMENT_KEY])",
+      "replace": "        movement = _validate_movement(resolve_dial_movement({key: value for key, value in event.items() if key != _MOVEMENT_KEY}, load_rulebook(Path(\".\")))[_MOVEMENT_KEY])"
+    },
+    {
+      "label": "[must-kill] malformed explicit metadata can enter the legacy escape hatch",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        if rulebook is not None or has_metadata:",
+      "replace": "        if rulebook is not None or (has_metadata and isinstance(event[_MOVEMENT_KEY], dict)):",
+      "test_command": ["uv", "run", "pytest", "-q", "tests/test_economy.py::test_legacy_flag_rejects_rulebook_and_any_present_metadata"]
+    },
+    {
+      "label": "[must-kill] nonfinite arithmetic result reaches state",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        if isinstance(value, float) and not math.isfinite(value):\n            raise ValidationError(f\"dial movement: {dial} result must be finite\")",
+      "replace": "        if False:\n            raise ValidationError(f\"dial movement: {dial} result must be finite\")"
+    },
+    {
+      "label": "[must-kill] malformed v1 metadata bypasses strict validation",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        movement = _validate_movement(event[_MOVEMENT_KEY])",
+      "replace": "        movement = _validate_movement(event[_MOVEMENT_KEY]) if isinstance(event[_MOVEMENT_KEY], dict) else {\"version\": 1, \"rulebook_sha256\": \"0\" * 64, \"dials\": {}}"
+    },
+    {
+      "label": "[must-kill] semantic hash stops using compact sorted JSON",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "            separators=(\",\", \":\"),",
+      "replace": "            separators=(\",\", \": \"),"
+    },
+    {
+      "label": "[control] reorder equivalent TOML table declarations",
+      "file": "../src/breakroom/data/economy.toml",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "TOML table declaration order does not change the parsed mappings, resolver behavior, or canonical sorted-key JSON digest; this control covers only the bundled rulebook used by the scoped suite.",
+      "find": "[events.incident]\ndial = \"morale\"\namount_path = \"incident.morale_delta\"\n\n[events.dial_delta]\ndials_path = \"dials\"\n",
+      "replace": "[events.dial_delta]\ndials_path = \"dials\"\n\n[events.incident]\ndial = \"morale\"\namount_path = \"incident.morale_delta\"\n"
+    }
+  ]
+}

@@ -13,6 +13,9 @@ breakroom = "breakroom.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/breakroom"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",

@@ -160,7 +160,67 @@ def test_load_world_rejects_non_int_scalar_field(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError, match="state/tower.json: morale must be an int"):
+    with pytest.raises(
+        ValidationError, match="state/tower.json: morale must be a finite int or float"
+    ):
+        load_world(world)
+
+
+def test_load_world_accepts_fractional_and_out_of_range_finite_dials(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text())
+    state.update(budget=-0.25, morale=101.5, reputation=-2.5)
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    assert load_world(world).state["budget"] == -0.25
+    assert load_world(world).state["morale"] == 101.5
+    assert load_world(world).state["reputation"] == -2.5
+
+
+def test_snapshot_round_trip_preserves_fractional_dials(tmp_path: Path) -> None:
+    state = {
+        "seed": 42,
+        "day": 3,
+        "budget": 1000.5,
+        "morale": 47.5,
+        "reputation": 52.25,
+        "rooms": [],
+        "characters": [],
+    }
+
+    snapshot = write_snapshot(tmp_path, state, "fractional-dials")
+
+    loaded = load_snapshot(snapshot)
+    assert {key: loaded[key] for key in ("budget", "morale", "reputation")} == {
+        key: state[key] for key in ("budget", "morale", "reputation")
+    }
+    assert "edge_key_encoding" not in state
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("budget", True),
+        ("morale", float("nan")),
+        ("reputation", float("inf")),
+        ("budget", float("-inf")),
+        ("seed", 42.0),
+        ("day", True),
+    ],
+)
+def test_load_world_rejects_nonfinite_dials_and_noninteger_clock_fields(
+    tmp_path: Path, field: str, value
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    path = world / "state" / "tower.json"
+    state = json.loads(path.read_text())
+    state[field] = value
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
         load_world(world)
 
 

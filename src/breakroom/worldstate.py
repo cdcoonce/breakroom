@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,22 +43,26 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         incident = event.get("incident")
         if not isinstance(incident, dict):
             raise ValidationError("incident event: incident must be an object")
-        morale_delta = incident.get("morale_delta", 0)
-        if not isinstance(morale_delta, (int, float)) or isinstance(morale_delta, bool):
-            raise ValidationError("incident event: morale_delta must be numeric")
         next_state["day"] = max(next_state["day"], event["day"])
-        next_state["morale"] += morale_delta
+        from breakroom.economy import move_dial
+
+        next_state = move_dial(
+            next_state,
+            event,
+            legacy_unclamped="dial_movement" not in event,
+        )
     elif event_type == "scene":
         next_state["day"] = max(next_state["day"], event["day"])
         _apply_scene_spotlight(next_state, event)
     elif event_type == "dial_delta":
         next_state["day"] = max(next_state["day"], event["day"])
-        for dial, delta in event["dials"].items():
-            if dial not in next_state:
-                raise ValidationError(f"unknown dial: {dial}")
-            if isinstance(delta, bool) or not isinstance(delta, (int, float)):
-                raise ValidationError(f"dial_delta event: {dial} delta must be an int or float")
-            next_state[dial] += delta
+        from breakroom.economy import move_dial
+
+        next_state = move_dial(
+            next_state,
+            event,
+            legacy_unclamped="dial_movement" not in event,
+        )
     elif event_type == "edge_delta":
         next_state["day"] = max(next_state["day"], event["day"])
         _apply_edge_delta(next_state, event)
@@ -326,10 +331,18 @@ def _validate_tower(state: dict[str, Any]) -> None:
     for field in ("seed", "day", "budget", "morale", "reputation", "rooms", "characters"):
         if field not in state:
             raise ValidationError(f"state/tower.json: missing {field}")
-    for field in ("seed", "day", "budget", "morale", "reputation"):
+    for field in ("seed", "day"):
         value = state[field]
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValidationError(f"state/tower.json: {field} must be an int")
+    for field in ("budget", "morale", "reputation"):
+        value = state[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+        ):
+            raise ValidationError(f"state/tower.json: {field} must be a finite int or float")
     if not isinstance(state["rooms"], list):
         raise ValidationError("state/tower.json: rooms must be a list")
     if not isinstance(state["characters"], list):

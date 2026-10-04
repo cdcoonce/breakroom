@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from breakroom import jsonio, norms, storylets, worldstate
+from breakroom import economy, jsonio, norms, storylets, worldstate
 from breakroom.events import append_event
 from breakroom.narrator import render_scene
 from breakroom.resolution.incidents import evaluate_tick, load_incident_table
@@ -22,6 +22,7 @@ def tick_world(world: Path) -> None:
     state_path = world / "state" / "tower.json"
     loaded = worldstate.load_world(world)
     state = loaded.state
+    rulebook = economy.load_rulebook(world)
     day = state["day"] + 1
 
     roll_log = RollLog()
@@ -83,8 +84,9 @@ def tick_world(world: Path) -> None:
             tags = norms.tag_record(registry, incident_event)
             norm_violations.extend(tags["norm_violations"])
             incident_event.update(tags)
-        incident_events.append(incident_event)
-        state = worldstate.apply_event(state, incident_event)
+        resolved_incident = economy.resolve_dial_movement(incident_event, rulebook)
+        incident_events.append(resolved_incident)
+        state = worldstate.apply_event(state, resolved_incident)
 
     # Resolver effects are adapted only at the tick boundary. The canonical incident
     # receipts above remain the first state changes; declared dial/edge effects follow
@@ -100,6 +102,8 @@ def tick_world(world: Path) -> None:
                 f"incident {incident_id!r} has unsupported effect type {effect_type!r}"
             )
         adapted_effect = {**effect, "day": day}
+        if effect_type == "dial_delta":
+            adapted_effect = economy.resolve_dial_movement(adapted_effect, rulebook)
         state = worldstate.apply_event(state, adapted_effect)
         state_effect_events.append(adapted_effect)
 

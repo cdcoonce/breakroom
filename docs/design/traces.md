@@ -155,6 +155,22 @@ When a decision creates or modifies an event, the event log should reference the
 The event log remains readable without opening traces, but the trace log is the authoritative source
 for model attribution and context.
 
+## Dial Movement Receipts
+
+New incident and `dial_delta` receipts include a `dial_movement` v1 object. It freezes the
+resolved dial amounts and the SHA-256 digest of the semantic economy rulebook so replay does
+not reinterpret old events under a later configuration. The rulebook lives at
+`data/economy.toml`; a missing world override uses the packaged default. Rulebook digests use
+sorted-key compact JSON encoded as UTF-8 with non-ASCII characters left literal and non-finite
+JSON numbers forbidden. Rulebook TOML comments, whitespace, and declaration order therefore do
+not affect the digest.
+
+The reducer applies versioned receipts through the economy mutator. Morale and reputation are
+clamped to 0–100 for new receipts; finite budget movement is unbounded. Events with no
+`dial_movement` metadata retain the historical unbounded reducer behavior for legacy-log
+compatibility. Present but malformed metadata is an error rather than a legacy fallback. World
+loading accepts finite fractional dial values and preserves them through save and replay.
+
 ## Incident State Effects
 
 Incident resolution retains `incident_detail` as required metadata for constructing each canonical
