@@ -1,0 +1,30 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "python", "-m", "pytest", "-q", "tests/test_norms.py"],
+  "collect_command": ["uv", "run", "python", "-m", "pytest", "--collect-only", "-q", "tests/test_norms.py"],
+  "mutants": [
+    {
+      "label": "remove tags string-member guard",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "    if not all(isinstance(tag, str) for tag in entry[\"tags\"]):\n        raise ValidationError(f\"{relative}: tags must contain only strings for {entry['id']}\")",
+      "replace": ""
+    },
+    {
+      "label": "remove related_values string-member guard",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "    if not all(isinstance(value, str) for value in entry[\"related_values\"]):\n        raise ValidationError(\n            f\"{relative}: related_values must contain only strings for {entry['id']}\"\n        )",
+      "replace": ""
+    },
+    {
+      "label": "[control] require exact builtin string type",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "tomllib decodes TOML strings as builtin str instances, so exact type checks and isinstance checks accept the same TOML list members; other TOML member types remain rejected",
+      "find": "isinstance(tag, str)",
+      "replace": "type(tag) is str"
+    }
+  ]
+}
