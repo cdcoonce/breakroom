@@ -1,0 +1,52 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_narrator.py::test_render_scene_times_out_real_foreground_command",
+    "tests/test_narrator.py::test_render_scene_rejects_invalid_timeout_before_running_command"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_narrator.py::test_render_scene_times_out_real_foreground_command",
+    "tests/test_narrator.py::test_render_scene_rejects_invalid_timeout_before_running_command"
+  ],
+  "mutants": [
+    {
+      "label": "remove timeout from narrator subprocess",
+      "file": "../src/breakroom/narrator.py",
+      "oracle": "real",
+      "find": "                text=True,\n                timeout=timeout,",
+      "replace": "                text=True,"
+    },
+    {
+      "label": "ignore nonnumeric narrator timeout override",
+      "file": "../src/breakroom/narrator.py",
+      "oracle": "real",
+      "find": "        except ValueError as error:\n            raise RuntimeError(\n                f\"invalid BREAKROOM_NARRATOR_TIMEOUT value: {timeout_value!r}\"\n            ) from error",
+      "replace": "        except ValueError as error:\n            timeout = DEFAULT_NARRATOR_TIMEOUT"
+    },
+    {
+      "label": "accept non-positive and non-finite timeout values",
+      "file": "../src/breakroom/narrator.py",
+      "oracle": "real",
+      "find": "        if not math.isfinite(timeout) or timeout <= 0:",
+      "replace": "        if False:"
+    },
+    {
+      "label": "[control] reorder equivalent timeout validation predicates",
+      "file": "../src/breakroom/narrator.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The two pure checks reject the same values in either order; this does not claim behavior under monkeypatching math.isfinite.",
+      "find": "        if not math.isfinite(timeout) or timeout <= 0:",
+      "replace": "        if timeout <= 0 or not math.isfinite(timeout):"
+    }
+  ]
+}

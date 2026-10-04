@@ -21,6 +21,10 @@ uv run breakroom tick --world .world
 
 The starter tracer writes structured state under `.world/state/`, a provisional TOML character under `.world/characters/`, append-only events to `.world/events.jsonl`, and daily chronicle digests under `.world/chronicles/`.
 
+## Narrator configuration
+
+Set `BREAKROOM_NARRATOR_COMMAND` to use a configured narrator command. The command has a 60-second local wait timeout by default; set `BREAKROOM_NARRATOR_TIMEOUT` to a positive finite number of seconds to override it. Invalid timeout values raise a configuration error, and a command that exceeds the timeout raises a timeout error naming the command and effective timeout. When no command is configured, breakroom uses its built-in narrator fallback. The timeout bounds the local synchronous wait and does not guarantee termination of shell descendants or remote work started by a wrapper.
+
 ## The bet
 
 Every LLM story game forgets itself — they all patch memory with retrieval over transcripts. breakroom's world state is structured, versioned, and diffable by construction: relationships carry provenance receipts, scars never heal, and the scene brief is assembled from state, not vibes. If structured state can't carry believable long-lived characters, we want to find out fast.
