@@ -1,13 +1,17 @@
 import json
 import re
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
 
 from breakroom import storylets
 from breakroom.cli import main
+from breakroom.events import append_event
+from breakroom.init import init_world
 from breakroom.resolution.incidents import load_incident_table
-from breakroom.tick import QUIET_DAY_PROSE, TickError
+from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
 from breakroom.worldstate import ValidationError
 
 # Mirrors STARTER_INCIDENTS in breakroom.init: which room each starter incident points
@@ -76,9 +80,22 @@ def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
     assert main(["init", "--world", str(world), "--seed", "42"]) == 0
 
     tower_path = world / "state" / "tower.json"
-    tower_state = json.loads(tower_path.read_text())
+    original_state_bytes = tower_path.read_bytes()
+    tower_state = json.loads(original_state_bytes)
     tower_state["rooms"] = []
     tower_path.write_text(json.dumps(tower_state))
+    failed_state_bytes = tower_path.read_bytes()
+
+    unrelated_incident = append_event(
+        world,
+        {
+            "type": "incident",
+            "day": 0,
+            "incident": {"id": "unrelated-prior-incident"},
+        },
+    )
+    events_path = world / "events.jsonl"
+    events_before_failure = events_path.read_bytes()
 
     with pytest.raises(TickError) as exc_info:
         main(["tick", "--world", str(world)])
@@ -88,7 +105,32 @@ def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
         incident_id for incident_id in STARTER_INCIDENT_ROOMS if incident_id in message
     ]
     assert len(matched_incident_ids) == 1
-    assert STARTER_INCIDENT_ROOMS[matched_incident_ids[0]] in message
+    spotlight_room = STARTER_INCIDENT_ROOMS[matched_incident_ids[0]]
+    assert spotlight_room in message
+    assert events_path.read_bytes() == events_before_failure
+    assert tower_path.read_bytes() == failed_state_bytes
+
+    # Repair only the missing dependency and retry the same day. The failed attempt
+    # must not leave orphan incident receipts that the retry would duplicate.
+    tower_path.write_bytes(original_state_bytes)
+    assert main(["tick", "--world", str(world)]) == 0
+
+    saved_state = json.loads(tower_path.read_text())
+    assert saved_state["day"] == 1
+    events = read_jsonl(events_path)
+    assert events[0] == unrelated_incident
+    day_one_events = [event for event in events if event.get("day") == 1]
+    assert [event["type"] for event in day_one_events] == [
+        "incident",
+        "incident",
+        "incident",
+        "scene",
+    ]
+    assert sorted(
+        event["incident"]["id"]
+        for event in day_one_events
+        if event["type"] == "incident"
+    ) == sorted(STARTER_INCIDENT_ROOMS)
 
 
 def test_tick_emits_one_incident_event_per_fired_incident_and_one_scene(
@@ -285,3 +327,81 @@ def test_same_seed_produces_the_same_incident_events_across_two_worlds(
 
     incident_events = [events_of(world, "incident") for world in worlds]
     assert incident_events[0] == incident_events[1]
+
+
+@pytest.mark.parametrize("declare_empty_ids", [False, True], ids=["omitted", "empty"])
+@pytest.mark.parametrize("use_command", [False, True], ids=["builtin", "local-command"])
+def test_incident_free_storylet_keeps_its_scene_and_tick_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declare_empty_ids: bool,
+    use_command: bool,
+) -> None:
+    world = tmp_path / "ambient-tower"
+    init_world(world, seed=42)
+    definitions = world / "data" / "storylets"
+    for definition in definitions.glob("*.toml"):
+        definition.unlink()
+    eligibility = "incident_ids = []\n" if declare_empty_ids else ""
+    (definitions / "office-pause.toml").write_text(
+        'id = "office-pause"\n'
+        'title = "Office Pause"\n'
+        'premise = "A shared pause gives the afternoon a different rhythm."\n'
+        'kind = "ambient"\n'
+        '\n[eligibility]\n'
+        f'{eligibility}'
+        '\n[[participants]]\n'
+        'slot = "colleague"\n'
+        'source = "incident.cleanup_owner"\n'
+        'required = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("BREAKROOM_NARRATOR_COMMAND", raising=False)
+    expected_prose = "Jordan Vale: A shared pause gives the afternoon a different rhythm."
+    if use_command:
+        # A local process verifies the real JSON transport without contacting a model.
+        command = "import sys; sys.stdout.write(sys.stdin.read())"
+        monkeypatch.setenv(
+            "BREAKROOM_NARRATOR_COMMAND", shlex.join([sys.executable, "-c", command])
+        )
+
+    tick_world(world)
+
+    scenes = events_of(world, "scene")
+    assert len(scenes) == 1
+    scene = scenes[0]
+    assert scene["storylet_id"] == "office-pause"
+    assert scene["character_id"] == "jordan-vale"
+    assert scene["character_ids"] == ["jordan-vale"]
+    assert scene["brief"]["character"]["name"] == "Jordan Vale"
+    assert scene["brief"]["storylet"] == {
+        "id": "office-pause",
+        "title": "Office Pause",
+        "premise": "A shared pause gives the afternoon a different rhythm.",
+    }
+    assert scene["brief"]["incident"] is None
+    assert scene["brief"]["room"] is None
+    if use_command:
+        assert json.loads(scene["prose"]) == scene["brief"]
+    else:
+        assert scene["prose"] == expected_prose
+    scene_json = next(
+        line
+        for line in (world / "events.jsonl").read_text().splitlines()
+        if json.loads(line)["type"] == "scene"
+    )
+    assert '"incident": null' in scene_json
+    assert '"room": null' in scene_json
+    incidents = events_of(world, "incident")
+    assert sorted(event["incident"]["id"] for event in incidents) == sorted(STARTER_INCIDENT_ROOMS)
+    saved_state = json.loads((world / "state" / "tower.json").read_text())
+    assert saved_state["day"] == 1
+    assert saved_state["morale"] == 45
+    assert saved_state["spotlight_history"] == {"jordan-vale": 1}
+    selections = [roll for roll in scene["rolls"] if roll["stream"] == "storylet_select"]
+    assert len(selections) == 1
+    assert selections[0]["result"] == "office-pause"
+    assert events_of(world, "quiet_day") == []
+    chronicle = (world / "chronicles" / "day-0001.md").read_text()
+    assert chronicle.startswith("# Day 0001\n")
+    assert scene["prose"] in chronicle
