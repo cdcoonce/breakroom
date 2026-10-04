@@ -1,0 +1,50 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py"
+  ],
+  "mutants": [
+    {
+      "label": "reject persisted quiet-day events during replay",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    elif event_type == \"quiet_day\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])",
+      "replace": "    elif event_type == \"not_quiet_day\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])"
+    },
+    {
+      "label": "move the day backwards on an older quiet-day event",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    elif event_type == \"quiet_day\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])",
+      "replace": "    elif event_type == \"quiet_day\":\n        next_state[\"day\"] = event[\"day\"]"
+    },
+    {
+      "label": "silently accept unsupported event types",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "find": "    else:\n        raise ValidationError(f\"event type unsupported: {event_type}\")",
+      "replace": "    else:\n        return next_state"
+    },
+    {
+      "label": "[control] swap operands to symmetric max for quiet-day advancement",
+      "file": "../src/breakroom/worldstate.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Quiet-day event days and state days are JSON integers in every path this suite reaches, so max is symmetric and swapping its operands is inert there; this does not claim equivalence for non-integer custom comparable objects outside the persisted event schema.",
+      "find": "    elif event_type == \"quiet_day\":\n        next_state[\"day\"] = max(next_state[\"day\"], event[\"day\"])",
+      "replace": "    elif event_type == \"quiet_day\":\n        next_state[\"day\"] = max(event[\"day\"], next_state[\"day\"])"
+    }
+  ]
+}

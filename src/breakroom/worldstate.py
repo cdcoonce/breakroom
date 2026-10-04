@@ -59,6 +59,8 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     elif event_type == "edge_delta":
         next_state["day"] = max(next_state["day"], event["day"])
         _apply_edge_delta(next_state, event)
+    elif event_type == "quiet_day":
+        next_state["day"] = max(next_state["day"], event["day"])
     else:
         raise ValidationError(f"event type unsupported: {event_type}")
     return next_state
