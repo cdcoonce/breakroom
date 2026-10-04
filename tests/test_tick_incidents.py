@@ -240,6 +240,27 @@ def test_fired_incident_without_eligible_storylet_gets_factual_chronicle(
     assert QUIET_DAY_PROSE not in chronicle
 
 
+def test_fired_incident_without_detail_raises_tick_error_naming_incident(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "tower"
+    init_world(world, seed=42)
+    (world / "data" / "incidents.toml").write_text(
+        '''
+[[incidents]]
+id = "dial-only"
+base_rate = 1.0
+effects = [{ type = "dial_delta", dials = { morale = -1 } }]
+''',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TickError) as exc_info:
+        tick_world(world)
+
+    assert "dial-only" in str(exc_info.value)
+
+
 def test_a_quiet_day_records_the_rolls_that_made_it_quiet(tmp_path: Path, stub_narrator) -> None:
     world = tmp_path / "tower"
     assert main(["init", "--world", str(world), "--seed", "42"]) == 0
