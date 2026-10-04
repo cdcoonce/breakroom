@@ -81,6 +81,12 @@ def _validate_norm(relative: Path, entry: Any) -> Norm:
         raise ValidationError(f"{relative}: tags must be a list for {entry['id']}")
     if not isinstance(entry["related_values"], list):
         raise ValidationError(f"{relative}: related_values must be a list for {entry['id']}")
+    if not all(isinstance(tag, str) for tag in entry["tags"]):
+        raise ValidationError(f"{relative}: tags must contain only strings for {entry['id']}")
+    if not all(isinstance(value, str) for value in entry["related_values"]):
+        raise ValidationError(
+            f"{relative}: related_values must contain only strings for {entry['id']}"
+        )
     if entry["detection"] not in _DETECTORS:
         raise ValidationError(
             f"{relative}: invalid detection {entry['detection']!r} for {entry['id']}"
