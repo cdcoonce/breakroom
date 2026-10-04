@@ -33,6 +33,15 @@ def tick_world(world: Path) -> None:
     state = economy.move_dial(state, payroll, rulebook=rulebook)
 
     roll_log = RollLog()
+    contract_config = economy.load_contract_config(world)
+    state, contract_events = economy.contract_tick(
+        state,
+        loaded.characters,
+        contract_config,
+        day=day,
+        rulebook=rulebook,
+        log=roll_log,
+    )
     table = load_incident_table(world)
     resolution = evaluate_tick(table, state=state, seed=state["seed"], tick=day, log=roll_log)
 
@@ -126,6 +135,7 @@ def tick_world(world: Path) -> None:
         "incident": None,
         "storylet": None,
         "state": world_state,
+        "contracts": _contract_summary(state),
     }
     prose: str | None = None
 
@@ -148,6 +158,7 @@ def tick_world(world: Path) -> None:
             # An empty spotlight is a legitimate outcome: no eligible storylet does not
             # mean no incidents fired, but the day still needs its receipts recorded.
             append_event(world, payroll)
+            _append_contract_events(world, contract_events)
             _append_incident_events(world, incident_events)
             _append_state_effect_events(world, state_effect_events)
             append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
@@ -201,6 +212,7 @@ def tick_world(world: Path) -> None:
             }
             prose = render_scene(brief)
             append_event(world, payroll)
+            _append_contract_events(world, contract_events)
             _append_incident_events(world, incident_events)
             scene_event: dict[str, Any] = {
                 "type": "scene",
@@ -224,6 +236,7 @@ def tick_world(world: Path) -> None:
         # quiet day needs its own record: otherwise the tick appends nothing at all and
         # the day is missing from the event chronology along with its receipts.
         append_event(world, payroll)
+        _append_contract_events(world, contract_events)
         append_event(world, {"type": "quiet_day", "day": day, "rolls": roll_log.records})
 
     if not fired_ids:
@@ -241,6 +254,29 @@ def tick_world(world: Path) -> None:
 def _append_incident_events(world: Path, incident_events: list[dict[str, Any]]) -> None:
     for incident_event in incident_events:
         append_event(world, incident_event)
+
+
+def _append_contract_events(world: Path, contract_events: list[dict[str, Any]]) -> None:
+    for event in contract_events:
+        append_event(world, event)
+
+
+def _contract_summary(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": contract_id,
+            "status": record["status"],
+            "client": record["client"],
+            "deadline_day": record.get("deadline_day"),
+            "expires_day": record.get("expires_day"),
+            "progress": record.get("progress", 0),
+            "required_work_units": record["terms"]["required_work_units"],
+            "team_ids": list(record.get("team_ids", [])),
+            "work_room_id": record.get("work_room_id"),
+        }
+        for contract_id, record in sorted(state.get("contracts", {}).items())
+        if record.get("status") in {"offered", "accepted", "completed", "missed"}
+    ]
 
 
 def _append_state_effect_events(world: Path, effect_events: list[dict[str, Any]]) -> None:

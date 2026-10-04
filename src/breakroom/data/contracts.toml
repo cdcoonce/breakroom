@@ -1,0 +1,18 @@
+offer_probability_per_reputation_point = 0.01
+offer_lifetime_ticks = 3
+matching_room_factor = 1.0
+mismatching_room_factor = 0.5
+
+[templates.standard]
+client = "Aperture Office Supply"
+required_work_units = 3
+duration_ticks = 3
+required_room_kind = "work"
+payout_budget = 40
+miss_penalty_budget = 20
+miss_penalty_reputation = 5
+pressure_milestones = [
+  { ticks_remaining = 2, level = "watch" },
+  { ticks_remaining = 1, level = "urgent" },
+  { ticks_remaining = 0, level = "due" },
+]

@@ -68,6 +68,17 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         _apply_edge_delta(next_state, event)
     elif event_type == "quiet_day":
         next_state["day"] = max(next_state["day"], event["day"])
+    elif event_type in {
+        "contract_offer",
+        "contract_accepted",
+        "contract_declined",
+        "contract_expired",
+        "contract_progress",
+        "contract_pressure",
+        "contract_completed",
+        "contract_missed",
+    }:
+        _apply_contract_event(next_state, event)
     else:
         raise ValidationError(f"event type unsupported: {event_type}")
     return next_state
@@ -273,8 +284,109 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
         )
 
 
+def _apply_contract_event(state: dict[str, Any], event: dict[str, Any]) -> None:
+    """Replay one frozen contract transition without interpreting current configuration."""
+    event_type = event["type"]
+    records = state.setdefault("contracts", {})
+    if not isinstance(records, dict):
+        raise ValidationError("contract event: state contracts must be an object")
+    if event_type == "contract_offer":
+        offer_id = event.get("offer_id")
+        if not isinstance(offer_id, str) or not offer_id or offer_id in records:
+            raise ValidationError("contract_offer event: invalid or duplicate offer_id")
+        terms = event.get("terms")
+        if not isinstance(terms, dict):
+            raise ValidationError("contract_offer event: terms must be an object")
+        record = copy.deepcopy(event)
+        record.pop("sequence", None)
+        record["status"] = "offered"
+        record["progress"] = 0
+        record["emitted_pressure"] = []
+        records[offer_id] = record
+        return
+
+    contract_id = (
+        event.get("offer_id")
+        if event_type == "contract_expired"
+        else event.get("contract_id")
+    )
+    record = records.get(contract_id) if isinstance(contract_id, str) else None
+    if not isinstance(record, dict):
+        raise ValidationError(f"{event_type} event: unknown contract {contract_id!r}")
+    if event_type == "contract_accepted":
+        if record.get("status") != "offered":
+            raise ValidationError(f"contract {contract_id!r} is not available for acceptance")
+        team_ids = event.get("team_ids")
+        terms = event.get("terms")
+        work_room_id = event.get("work_room_id")
+        if (
+            not isinstance(team_ids, list)
+            or not team_ids
+            or not all(isinstance(member, str) for member in team_ids)
+            or not isinstance(work_room_id, str)
+            or not isinstance(terms, dict)
+        ):
+            raise ValidationError("contract_accepted event: invalid team, room, or terms")
+        if len(set(team_ids)) != len(team_ids):
+            raise ValidationError("contract_accepted event: duplicate team member")
+        record.update(
+            status="accepted",
+            accepted_day=event.get("day"),
+            deadline_day=event.get("day") + terms["duration_ticks"],
+            team_ids=copy.deepcopy(team_ids),
+            work_room_id=work_room_id,
+            terms=copy.deepcopy(terms),
+        )
+    elif event_type in {"contract_declined", "contract_expired"}:
+        if record.get("status") != "offered":
+            raise ValidationError(f"contract {contract_id!r} is not an open offer")
+        record["status"] = "declined" if event_type == "contract_declined" else "expired"
+    elif event_type == "contract_progress":
+        if record.get("status") != "accepted":
+            raise ValidationError(f"contract {contract_id!r} is not active")
+        delta = event.get("work_delta")
+        progress = event.get("progress")
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, (int, float))
+            or isinstance(delta, float) and not math.isfinite(delta)
+            or delta < 0
+            or isinstance(progress, bool)
+            or not isinstance(progress, (int, float))
+            or isinstance(progress, float) and not math.isfinite(progress)
+            or progress < 0
+        ):
+            raise ValidationError(
+                "contract_progress event: work values must be finite nonnegative numbers"
+            )
+        record["progress"] = progress
+        record["last_work"] = {
+            key: copy.deepcopy(event[key])
+            for key in (
+                "day", "work_delta", "progress", "team_focus", "work_room_id",
+                "work_room_kind", "required_room_kind", "fit_factor"
+            )
+            if key in event
+        }
+    elif event_type == "contract_pressure":
+        if record.get("status") != "accepted":
+            raise ValidationError(f"contract {contract_id!r} is not active")
+        level = event.get("level")
+        emitted = record.setdefault("emitted_pressure", [])
+        if not isinstance(level, str) or not level or level in emitted:
+            raise ValidationError(f"contract {contract_id!r}: duplicate or invalid pressure level")
+        emitted.append(level)
+    elif event_type in {"contract_completed", "contract_missed"}:
+        if record.get("status") != "accepted":
+            raise ValidationError(f"contract {contract_id!r} is not active")
+        record["status"] = "completed" if event_type == "contract_completed" else "missed"
+    else:
+        raise ValidationError(f"event type unsupported: {event_type}")
+
+
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:
     state = _normalize_edge_state(initial_state, context="replay initial state")
+    state.setdefault("contracts", {})
     for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
@@ -331,6 +443,9 @@ def _validate_tower(state: dict[str, Any]) -> None:
     for field in ("seed", "day", "budget", "morale", "reputation", "rooms", "characters"):
         if field not in state:
             raise ValidationError(f"state/tower.json: missing {field}")
+    state.setdefault("contracts", {})
+    if not isinstance(state["contracts"], dict):
+        raise ValidationError("state/tower.json: contracts must be an object")
     for field in ("seed", "day"):
         value = state[field]
         if isinstance(value, bool) or not isinstance(value, int):

@@ -64,6 +64,18 @@ def _standard_override(**changes: str) -> str:
     )
 
 
+def _duration_pressure_override() -> str:
+    default = (
+        'pressure_milestones = [{ ticks_remaining = 2, level = "watch" }, '
+        '{ ticks_remaining = 1, level = "urgent" }, '
+        '{ ticks_remaining = 0, level = "due" }]'
+    )
+    return _standard_override().replace(
+        default,
+        'pressure_milestones = [{ ticks_remaining = 3, level = "due" }]',
+    )
+
+
 def test_new_world_copies_contract_config_and_bundled_template_is_explicit(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
@@ -108,6 +120,19 @@ def test_old_world_uses_bundled_contracts_and_defaults_ignore_cwd(
     assert config["templates"]["standard"]["required_work_units"] == 3
 
 
+def test_present_valid_contract_override_takes_precedence(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    override = world / "data" / "contracts.toml"
+    override.write_text(
+        _standard_override().replace("payout_budget = 40", "payout_budget = 77"),
+        encoding="utf-8",
+    )
+    assert (
+        economy_api().load_contract_config(world)["templates"]["standard"]["payout_budget"]
+        == 77
+    )
+
+
 @pytest.mark.parametrize(
     "contents",
     [
@@ -117,6 +142,20 @@ def test_old_world_uses_bundled_contracts_and_defaults_ignore_cwd(
         _standard_override(offer_lifetime_ticks="true"),
         _standard_override(matching_room_factor="0.9"),
         _standard_override(mismatching_room_factor="nan"),
+        _standard_override().replace("required_work_units = 3", "required_work_units = true"),
+        _standard_override().replace("required_work_units = 3", "required_work_units = nan"),
+        _standard_override().replace("duration_ticks = 3", "duration_ticks = true"),
+        _standard_override().replace("payout_budget = 40", "payout_budget = true"),
+        _standard_override().replace("payout_budget = 40", "payout_budget = nan"),
+        _duration_pressure_override(),
+        _standard_override().replace(
+            "ticks_remaining = 1, level = \"urgent\"",
+            "ticks_remaining = 2, level = \"urgent\"",
+        ),
+        _standard_override().replace(
+            "ticks_remaining = 1, level = \"urgent\"",
+            "ticks_remaining = 1, level = \"watch\"",
+        ),
     ],
 )
 def test_present_invalid_contract_override_fails_closed(
@@ -187,6 +226,23 @@ def test_fixed_seed_offer_draws_use_the_dedicated_stream_and_snapshot_terms(
     ]
 
 
+def test_offer_probability_scales_from_zero_to_reputation_ceiling(tmp_path: Path) -> None:
+    from breakroom.tick import tick_world
+
+    worlds = []
+    for reputation in (0, 100):
+        world = _world(tmp_path / str(reputation), reputation=reputation)
+        for _ in range(3):
+            tick_world(world)
+        worlds.append(_offers(world))
+    assert worlds[0] == []
+    assert [event["offer_id"] for event in worlds[1]] == [
+        "contract-offer-0001",
+        "contract-offer-0002",
+        "contract-offer-0003",
+    ]
+
+
 def test_contract_list_accept_decline_are_durable_and_replayable(tmp_path: Path, capsys) -> None:
     world = _world(tmp_path)
     from breakroom.tick import tick_world
@@ -209,6 +265,7 @@ def test_contract_list_accept_decline_are_durable_and_replayable(tmp_path: Path,
     ][0]
     assert accepted_event["contract_id"] == offer_id
 
+    tick_world(world)
     next_offer = _offers(world)[-1]["offer_id"]
     declined = economy_api().decline_contract(world, next_offer)
     assert declined["status"] == "declined"
@@ -231,6 +288,26 @@ def test_invalid_accept_writes_neither_journal_nor_snapshot(tmp_path: Path) -> N
 
     assert events_path.read_bytes() == events_before
     assert snapshot_path.read_bytes() == snapshot_before
+
+
+@pytest.mark.parametrize("focus", ["true", "-1"])
+def test_accept_rejects_invalid_focus_without_writes(tmp_path: Path, focus: str) -> None:
+    world = _world(tmp_path)
+    from breakroom.tick import tick_world
+
+    tick_world(world)
+    offer_id = _offers(world)[0]["offer_id"]
+    character_path = world / "characters" / "jordan-vale.toml"
+    character_path.write_text(
+        character_path.read_text(encoding="utf-8").replace("focus = 2", f"focus = {focus}"),
+        encoding="utf-8",
+    )
+    events_path = world / "events.jsonl"
+    snapshot_path = world / "state" / "tower.json"
+    before = events_path.read_bytes(), snapshot_path.read_bytes()
+    with pytest.raises(ValidationError, match="focus"):
+        economy_api().accept_contract(world, offer_id, ["jordan-vale"])
+    assert (events_path.read_bytes(), snapshot_path.read_bytes()) == before
 
 
 def test_offer_is_acceptible_before_expiry_and_expires_on_the_expiry_day(tmp_path: Path) -> None:
@@ -294,15 +371,37 @@ def test_cli_accept_decline_contract_commands_need_no_model(tmp_path: Path, caps
     world = _world(tmp_path)
     from breakroom.tick import tick_world
 
+    initial = json.loads(json.dumps(load_world(world).state))
     tick_world(world)
     offer_id = _offers(world)[0]["offer_id"]
+    assert main(["contracts", "list", "--world", str(world)]) == 0
+    listing = capsys.readouterr().out
+    assert "Aperture Office Supply" in listing
+    assert "required_work_units" in listing
+    assert "expires_day" in listing
     assert main(
         ["contracts", "accept", offer_id, "--team", "jordan-vale", "--world", str(world)]
     ) == 0
     assert "accepted" in capsys.readouterr().out
+    accepted = load_world(world).state["contracts"][offer_id]
+    assert accepted["status"] == "accepted"
+    assert accepted["deadline_day"] == 4
+    assert accepted["team_ids"] == ["jordan-vale"]
+    assert accepted["work_room_id"] == "open-office"
+    assert main(["contracts", "list", "--world", str(world)]) == 0
+    listing = capsys.readouterr().out
+    assert "deadline_day" in listing
+    assert "work_room_id" in listing
+    assert '"progress": 0' in listing
+    tick_world(world)
+    after_work = load_world(world).state["contracts"][offer_id]
+    assert after_work["progress"] == 2
+    assert after_work["last_work"]["team_focus"] == {"jordan-vale": 2}
     next_offer = _offers(world)[-1]["offer_id"]
     assert main(["contracts", "decline", next_offer, "--world", str(world)]) == 0
     assert "declined" in capsys.readouterr().out
+    assert load_world(world).state["contracts"][next_offer]["status"] == "declined"
+    assert replay_events(initial, world / "events.jsonl") == load_world(world).state
 
 
 def test_installed_wheel_loads_bundled_contract_config_outside_checkout(tmp_path: Path) -> None:

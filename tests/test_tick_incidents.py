@@ -293,9 +293,13 @@ def test_fired_incident_without_eligible_storylet_gets_factual_chronicle(
     assert len(quiet_events) == 1
     assert quiet_events[0]["day"] == 1
     rolls = quiet_events[0]["rolls"]
-    assert len(rolls) == 3
-    assert all(record["stream"] == "incidents" and record["tick"] == 1 for record in rolls)
-    assert sorted(record["result"] for record in rolls) == [False, False, True]
+    incident_rolls = [record for record in rolls if record["stream"] == "incidents"]
+    contract_rolls = [record for record in rolls if record["stream"] == "contract_offers"]
+    assert len(incident_rolls) == 3
+    assert len(contract_rolls) == 1
+    assert all(record["tick"] == 1 for record in rolls)
+    assert contract_rolls[0]["purpose"] == "contract_offer"
+    assert sorted(record["result"] for record in incident_rolls) == [False, False, True]
     assert events_of(world, "scene") == []
 
     chronicle = (world / "chronicles" / "day-0001.md").read_text()
@@ -338,7 +342,7 @@ def test_a_quiet_day_records_the_rolls_that_made_it_quiet(tmp_path: Path, stub_n
     assert quiet_events[0]["day"] == 1
     rolls = quiet_events[0]["rolls"]
     assert rolls
-    assert {record["stream"] for record in rolls} == {"incidents"}
+    assert {record["stream"] for record in rolls} == {"incidents", "contract_offers"}
     assert all(record["result"] is False for record in rolls)
 
 

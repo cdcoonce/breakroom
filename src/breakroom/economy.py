@@ -15,6 +15,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from breakroom.resolution.rng import RngStream, RollLog
 from breakroom.worldstate import ValidationError
 
 _DIALS = {"budget", "morale", "reputation"}
@@ -22,6 +23,388 @@ _MOVEMENT_KEY = "dial_movement"
 _PAYROLL_RATE_KEY = "per_character_rate"
 _THRESHOLD_ID = re.compile(r"[a-z][a-z0-9_]*", re.ASCII)
 _THRESHOLD_DIALS = {"budget", "morale"}
+_CONTRACT_ROOT_KEYS = {
+    "offer_probability_per_reputation_point",
+    "offer_lifetime_ticks",
+    "matching_room_factor",
+    "mismatching_room_factor",
+    "templates",
+}
+_CONTRACT_TEMPLATE_KEYS = {
+    "client",
+    "required_work_units",
+    "duration_ticks",
+    "required_room_kind",
+    "payout_budget",
+    "miss_penalty_budget",
+    "miss_penalty_reputation",
+    "pressure_milestones",
+}
+
+
+def load_contract_config(world: Path) -> dict[str, Any]:
+    """Load and validate the complete contract configuration for a world."""
+    override = world / "data" / "contracts.toml"
+    if _path_entry_exists(override):
+        if not override.is_file():
+            raise ValidationError(f"{override}: contract configuration must be a regular file")
+        try:
+            text = override.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValidationError(f"{override}: cannot read contract configuration: {exc}") from exc
+        return _parse_contract_config(text, str(override))
+    try:
+        text = files("breakroom").joinpath("data/contracts.toml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValidationError(f"bundled contract configuration: cannot read: {exc}") from exc
+    return _parse_contract_config(text, "bundled contract configuration")
+
+
+def _path_entry_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValidationError(f"{path}: cannot inspect contract configuration: {exc}") from exc
+    return True
+
+
+def _parse_contract_config(text: str, context: str) -> dict[str, Any]:
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValidationError(f"{context}: invalid TOML: {exc}") from exc
+    if not isinstance(config, dict) or set(config) != _CONTRACT_ROOT_KEYS:
+        raise ValidationError(f"{context}: expected offer settings and templates only")
+    rate = _finite_number(
+        config["offer_probability_per_reputation_point"],
+        f"{context}: offer_probability_per_reputation_point",
+    )
+    if not 0 <= rate <= 0.01:
+        raise ValidationError(f"{context}: offer rate must be between 0 and 0.01")
+    lifetime = config["offer_lifetime_ticks"]
+    if isinstance(lifetime, bool) or not isinstance(lifetime, int) or lifetime <= 0:
+        raise ValidationError(f"{context}: offer_lifetime_ticks must be a positive integer")
+    matching = _finite_number(config["matching_room_factor"], f"{context}: matching_room_factor")
+    mismatch = _finite_number(
+        config["mismatching_room_factor"], f"{context}: mismatching_room_factor"
+    )
+    if matching != 1.0 or not 0 <= mismatch <= 1:
+        raise ValidationError(
+            f"{context}: room factors must be within [0, 1], with match fixed at 1.0"
+        )
+    raw_templates = config["templates"]
+    if not isinstance(raw_templates, dict) or set(raw_templates) != {"standard"}:
+        raise ValidationError(f"{context}: templates must contain exactly standard")
+    templates: dict[str, Any] = {}
+    for template_id, raw in raw_templates.items():
+        templates[template_id] = _validate_contract_template(raw, context)
+    return {
+        "offer_probability_per_reputation_point": rate,
+        "offer_lifetime_ticks": lifetime,
+        "matching_room_factor": matching,
+        "mismatching_room_factor": mismatch,
+        "templates": templates,
+    }
+
+
+def _validate_contract_template(value: Any, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _CONTRACT_TEMPLATE_KEYS:
+        raise ValidationError(f"{context}: standard template has missing or unsupported fields")
+    for field in ("client", "required_room_kind"):
+        if not isinstance(value[field], str) or not value[field].strip():
+            raise ValidationError(f"{context}: standard {field} must be a nonempty string")
+    for field in ("duration_ticks",):
+        item = value[field]
+        if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+            raise ValidationError(f"{context}: standard {field} must be a positive integer")
+    work = _finite_number(value["required_work_units"], f"{context}: required_work_units")
+    if work <= 0:
+        raise ValidationError(f"{context}: required_work_units must be positive")
+    for field in ("payout_budget", "miss_penalty_budget", "miss_penalty_reputation"):
+        amount = _finite_number(value[field], f"{context}: {field}")
+        if amount < 0:
+            raise ValidationError(f"{context}: {field} must be nonnegative")
+    milestones = value["pressure_milestones"]
+    if not isinstance(milestones, list):
+        raise ValidationError(f"{context}: pressure_milestones must be an array")
+    seen_days: set[int] = set()
+    seen_levels: set[str] = set()
+    previous = value["duration_ticks"]
+    normalized = []
+    for item in milestones:
+        if not isinstance(item, dict) or set(item) != {"ticks_remaining", "level"}:
+            raise ValidationError(
+                f"{context}: each pressure milestone needs ticks_remaining and level"
+            )
+        remaining, level = item["ticks_remaining"], item["level"]
+        if (
+            isinstance(remaining, bool)
+            or not isinstance(remaining, int)
+            or not 0 <= remaining < value["duration_ticks"]
+            or remaining in seen_days
+            or remaining >= previous
+        ):
+            raise ValidationError(f"{context}: pressure thresholds must be unique and descending")
+        if not isinstance(level, str) or not level.strip() or level in seen_levels:
+            raise ValidationError(f"{context}: pressure levels must be nonempty and unique")
+        previous = remaining
+        seen_days.add(remaining)
+        seen_levels.add(level)
+        normalized.append({"ticks_remaining": remaining, "level": level})
+    return {**value, "pressure_milestones": normalized}
+
+
+def list_contracts(world: Path) -> list[dict[str, Any]]:
+    """Return copied offer and contract records in stable ID order."""
+    from breakroom.worldstate import load_world
+
+    state = load_world(world).state
+    records = state.get("contracts", {})
+    if not isinstance(records, dict):
+        raise ValidationError("state/tower.json: contracts must be an object")
+    return [copy.deepcopy(records[key]) for key in sorted(records)]
+
+
+def accept_contract(
+    world: Path, offer_id: str, team_ids: list[str], work_room_id: str | None = None
+) -> dict[str, Any]:
+    from breakroom import jsonio, worldstate
+    from breakroom.events import append_event
+
+    loaded = worldstate.load_world(world)
+    state = loaded.state
+    offer = _require_offer(state, offer_id)
+    day = state["day"]
+    if day >= offer["expires_day"]:
+        raise ValidationError(f"offer {offer_id!r} expired on day {offer['expires_day']}")
+    if not isinstance(team_ids, list) or not team_ids:
+        raise ValidationError("contract team must be a nonempty list of character IDs")
+    if any(not isinstance(member, str) for member in team_ids):
+        raise ValidationError("contract team IDs must be strings")
+    if len(set(team_ids)) != len(team_ids):
+        raise ValidationError("contract team contains duplicate character IDs")
+    for member in team_ids:
+        if member not in loaded.characters:
+            raise ValidationError(f"contract team references unknown character {member!r}")
+        _validated_focus(loaded.characters[member], member)
+    if work_room_id is None:
+        matching = [
+            room
+            for room in state["rooms"]
+            if room.get("kind") == offer["terms"]["required_room_kind"]
+        ]
+        if not matching:
+            raise ValidationError(
+                f"no room matches required kind {offer['terms']['required_room_kind']!r}"
+            )
+        room = matching[0]
+        work_room_id = room["id"]
+    else:
+        room = next((room for room in state["rooms"] if room.get("id") == work_room_id), None)
+        if room is None:
+            raise ValidationError(f"unknown work room {work_room_id!r}")
+    event = {
+        "type": "contract_accepted",
+        "day": day,
+        "contract_id": offer_id,
+        "team_ids": list(team_ids),
+        "work_room_id": work_room_id,
+        "terms": copy.deepcopy(offer["terms"]),
+    }
+    staged = worldstate.apply_event(state, event)
+    append_event(world, event)
+    normalized = worldstate._normalize_edge_state(staged, context="state/tower.json")
+    jsonio.write_pretty_json(world / "state" / "tower.json", normalized)
+    return copy.deepcopy(staged["contracts"][offer_id])
+
+
+def decline_contract(world: Path, offer_id: str) -> dict[str, Any]:
+    from breakroom import jsonio, worldstate
+    from breakroom.events import append_event
+
+    state = worldstate.load_world(world).state
+    offer = _require_offer(state, offer_id)
+    if state["day"] >= offer["expires_day"]:
+        raise ValidationError(f"offer {offer_id!r} expired on day {offer['expires_day']}")
+    event = {"type": "contract_declined", "day": state["day"], "contract_id": offer_id}
+    staged = worldstate.apply_event(state, event)
+    append_event(world, event)
+    normalized = worldstate._normalize_edge_state(staged, context="state/tower.json")
+    jsonio.write_pretty_json(world / "state" / "tower.json", normalized)
+    return copy.deepcopy(staged["contracts"][offer_id])
+
+
+def _require_offer(state: dict[str, Any], offer_id: str) -> dict[str, Any]:
+    if not isinstance(offer_id, str):
+        raise ValidationError("offer ID must be a string")
+    records = state.get("contracts", {})
+    offer = records.get(offer_id) if isinstance(records, dict) else None
+    if not isinstance(offer, dict):
+        raise ValidationError(f"unknown offer {offer_id!r}")
+    if offer.get("status") != "offered":
+        raise ValidationError(f"offer {offer_id!r} is {offer.get('status')!r}, not offered")
+    return offer
+
+
+def _validated_focus(character: dict[str, Any], character_id: str) -> int:
+    focus = character.get("stats", {}).get("focus")
+    if isinstance(focus, bool) or not isinstance(focus, int) or focus < 0:
+        raise ValidationError(f"character {character_id!r}: focus must be a nonnegative integer")
+    return focus
+
+
+def contract_tick(
+    state: dict[str, Any],
+    characters: dict[str, dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    day: int,
+    rulebook: dict[str, Any],
+    log: RollLog,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Resolve deterministic contract events against staged tick state."""
+    from breakroom import worldstate
+
+    events: list[dict[str, Any]] = []
+    records = state.setdefault("contracts", {})
+    for contract_id in sorted(records):
+        record = records[contract_id]
+        if record.get("status") == "offered" and day >= record["expires_day"]:
+            event = {"type": "contract_expired", "day": day, "offer_id": contract_id}
+            state = worldstate.apply_event(state, event)
+            events.append(event)
+    probability = min(100, max(0, state["reputation"])) * config[
+        "offer_probability_per_reputation_point"
+    ]
+    offered = RngStream(seed=state["seed"], stream="contract_offers", tick=day, log=log).bernoulli(
+        "contract_offer", probability=probability
+    )
+    if offered:
+        template = copy.deepcopy(config["templates"]["standard"])
+        template["matching_room_factor"] = config["matching_room_factor"]
+        template["mismatching_room_factor"] = config["mismatching_room_factor"]
+        offer_id = f"contract-offer-{day:04d}"
+        event = {
+            "type": "contract_offer",
+            "day": day,
+            "offer_id": offer_id,
+            "created_day": day,
+            "expires_day": day + config["offer_lifetime_ticks"],
+            "client": template["client"],
+            "terms": template,
+        }
+        state = worldstate.apply_event(state, event)
+        events.append(event)
+    active_ids = sorted(
+        key for key, record in state["contracts"].items() if record.get("status") == "accepted"
+    )
+    for contract_id in active_ids:
+        contract = state["contracts"][contract_id]
+        team_focus = {
+            member: _validated_focus(characters[member], member)
+            for member in contract["team_ids"]
+        }
+        room = next(
+            (room for room in state["rooms"] if room.get("id") == contract["work_room_id"]), None
+        )
+        if room is None:
+            raise ValidationError(f"contract {contract_id!r}: assigned work room is missing")
+        required_kind = contract["terms"]["required_room_kind"]
+        factor = contract["terms"][
+            "matching_room_factor" if room["kind"] == required_kind else "mismatching_room_factor"
+        ]
+        try:
+            work = sum(team_focus.values()) * factor
+            progress = contract["progress"] + work
+        except OverflowError as exc:
+            raise ValidationError(
+                f"contract {contract_id!r}: work progress must remain finite"
+            ) from exc
+        if not _contract_number_is_finite(work) or not _contract_number_is_finite(progress):
+            raise ValidationError(f"contract {contract_id!r}: work progress must remain finite")
+        progress_event = {
+            "type": "contract_progress",
+            "day": day,
+            "contract_id": contract_id,
+            "work_delta": work,
+            "progress": progress,
+            "team_focus": team_focus,
+            "work_room_id": room["id"],
+            "work_room_kind": room["kind"],
+            "required_room_kind": required_kind,
+            "fit_factor": factor,
+        }
+        state = worldstate.apply_event(state, progress_event)
+        events.append(progress_event)
+        if progress >= contract["terms"]["required_work_units"]:
+            settlement = resolve_dial_movement(
+                {
+                    "type": "dial_delta",
+                    "day": day,
+                    "dials": {"budget": contract["terms"]["payout_budget"]},
+                    "source": "contract_completion",
+                    "contract_id": contract_id,
+                    "amount": contract["terms"]["payout_budget"],
+                    "terms": copy.deepcopy(contract["terms"]),
+                },
+                rulebook,
+            )
+            state = move_dial(state, settlement, rulebook=rulebook)
+            events.append(settlement)
+            terminal = {"type": "contract_completed", "day": day, "contract_id": contract_id}
+            state = worldstate.apply_event(state, terminal)
+            events.append(terminal)
+            continue
+        remaining = contract["deadline_day"] - day
+        emitted = set(contract.get("emitted_pressure", []))
+        for milestone in contract["terms"]["pressure_milestones"]:
+            level = milestone["level"]
+            if milestone["ticks_remaining"] == remaining and level not in emitted:
+                pressure = {
+                    "type": "contract_pressure",
+                    "day": day,
+                    "contract_id": contract_id,
+                    "ticks_remaining": remaining,
+                    "level": level,
+                }
+                state = worldstate.apply_event(state, pressure)
+                events.append(pressure)
+        if day >= contract["deadline_day"]:
+            terms = contract["terms"]
+            settlement = resolve_dial_movement(
+                {
+                    "type": "dial_delta",
+                    "day": day,
+                    "dials": {
+                        "budget": -terms["miss_penalty_budget"],
+                        "reputation": -terms["miss_penalty_reputation"],
+                    },
+                    "source": "contract_miss",
+                    "contract_id": contract_id,
+                    "amount": {
+                        "budget": -terms["miss_penalty_budget"],
+                        "reputation": -terms["miss_penalty_reputation"],
+                    },
+                    "terms": copy.deepcopy(terms),
+                },
+                rulebook,
+            )
+            state = move_dial(state, settlement, rulebook=rulebook)
+            events.append(settlement)
+            terminal = {"type": "contract_missed", "day": day, "contract_id": contract_id}
+            state = worldstate.apply_event(state, terminal)
+            events.append(terminal)
+    return state, events
+
+
+def _contract_number_is_finite(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and (not isinstance(value, float) or math.isfinite(value))
+    )
 
 
 @dataclass(frozen=True)

@@ -73,8 +73,8 @@ def _start_offer(world: Path) -> str:
 @pytest.mark.parametrize(
     ("focus_values", "room_id", "deltas", "totals", "terminal", "pressure"),
     [
-        ((2,), "open-office", [2, 2], [2, 4], "completed", []),
-        ((2,), "break-room", [1, 1, 1], [1, 2, 3], "completed", []),
+        ((2,), "open-office", [2, 2], [2, 4], "completed", ["watch"]),
+        ((2,), "break-room", [1, 1, 1], [1, 2, 3], "completed", ["watch", "urgent"]),
         ((0,), "open-office", [0, 0, 0], [0, 0, 0], "missed", ["watch", "urgent", "due"]),
         ((2, 3), "open-office", [5], [5], "completed", []),
     ],
@@ -89,6 +89,7 @@ def test_worked_progress_examples_pin_receipts_and_terminal_order(
     pressure: list[str],
 ) -> None:
     world = _world(tmp_path, focus_values=focus_values)
+    initial = json.loads(json.dumps(load_world(world).state))
     offer_id = _start_offer(world)
     team = ["jordan-vale", *[f"worker-{i}" for i in range(2, len(focus_values) + 1)]]
     accepted = economy.accept_contract(world, offer_id, team, work_room_id=room_id)
@@ -115,6 +116,37 @@ def test_worked_progress_examples_pin_receipts_and_terminal_order(
     assert [event["level"] for event in pressure_events] == pressure
     record = load_world(world).state["contracts"][offer_id]
     assert record["status"] == terminal
+    settlement_types = {
+        "contract_completion": "contract_completed",
+        "contract_miss": "contract_missed",
+    }
+    settlement_sources = [
+        event["source"]
+        for event in events
+        if event.get("contract_id") == offer_id
+        and event.get("source") in settlement_types
+    ]
+    assert len(settlement_sources) == 1
+    terminal_event_type = settlement_types[settlement_sources[0]]
+    tick_world(world)
+    later_events = _events(world)
+    assert len(
+        [
+            event
+            for event in later_events
+            if event.get("contract_id") == offer_id
+            and event.get("source") in settlement_types
+        ]
+    ) == 1
+    assert load_world(world).state["contracts"][offer_id]["status"] == terminal
+    assert replay_events(initial, world / "events.jsonl") == load_world(world).state
+    assert len(
+        [
+            event
+            for event in later_events
+            if event.get("contract_id") == offer_id and event["type"] == terminal_event_type
+        ]
+    ) == 1
 
     contract_day_events = [
         event
@@ -224,6 +256,37 @@ def test_contract_reducers_replay_frozen_work_and_do_not_advance_day() -> None:
     assert progressed["day"] == 4
     assert progressed["contracts"][offered["offer_id"]]["progress"] == 1
 
+    pressure = {
+        "type": "contract_pressure",
+        "day": 5,
+        "contract_id": offered["offer_id"],
+        "ticks_remaining": 2,
+        "level": "watch",
+    }
+    pressured = worldstate.apply_event(progressed, pressure)
+    with pytest.raises(ValidationError, match="duplicate or invalid pressure"):
+        worldstate.apply_event(pressured, pressure)
+
+
+def test_replay_uses_frozen_work_and_settlement_after_sources_change(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    initial = json.loads(json.dumps(load_world(world).state))
+    offer_id = _start_offer(world)
+    economy.accept_contract(world, offer_id, ["jordan-vale"])
+    _disable_future_offers(world)
+    tick_world(world)
+    saved = load_world(world).state
+
+    character_path = world / "characters" / "jordan-vale.toml"
+    character_path.write_text(
+        character_path.read_text(encoding="utf-8").replace("focus = 2", "focus = 999"),
+        encoding="utf-8",
+    )
+    (world / "data" / "contracts.toml").write_text("malformed [", encoding="utf-8")
+    (world / "data" / "economy.toml").write_text("malformed [", encoding="utf-8")
+
+    assert replay_events(initial, world / "events.jsonl") == saved
+
 
 def test_narrator_failure_discards_contract_receipts_and_retry_commits_once(
     tmp_path: Path, monkeypatch
@@ -278,12 +341,120 @@ def test_contract_phase_precedes_incidents_and_payroll_remains_first(tmp_path: P
     assert day_two[-1]["type"] in {"scene", "quiet_day"}
 
 
+def test_contract_draw_does_not_perturb_incident_or_storylet_rng(
+    tmp_path: Path, monkeypatch
+) -> None:
+    worlds = []
+    for rate in (0.0, 0.01):
+        world = tmp_path / str(rate)
+        init_world(world, seed=42)
+        state_path = world / "state" / "tower.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["reputation"] = 100
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (world / "data" / "contracts.toml").write_text(
+            _contract_config(rate=rate), encoding="utf-8"
+        )
+        worlds.append(world)
+
+    monkeypatch.setattr("breakroom.tick.render_scene", lambda _brief: "scene")
+    for world in worlds:
+        tick_world(world)
+    event_sets = [_events(world) for world in worlds]
+    roll_sets = [
+        next(event["rolls"] for event in events if event["type"] == "scene")
+        for events in event_sets
+    ]
+    def filter_rng(rolls: list[dict]) -> list[dict]:
+        return [record for record in rolls if record["stream"] != "contract_offers"]
+
+    assert filter_rng(roll_sets[0]) == filter_rng(roll_sets[1])
+    incident_views = [
+        [
+            {key: value for key, value in event.items() if key != "sequence"}
+            for event in events
+            if event["type"] == "incident"
+        ]
+        for events in event_sets
+    ]
+    assert incident_views[0] == incident_views[1]
+    scenes = [next(event for event in events if event["type"] == "scene") for events in event_sets]
+    assert (scenes[0]["storylet_id"], scenes[0]["character_ids"]) == (
+        scenes[1]["storylet_id"],
+        scenes[1]["character_ids"],
+    )
+
+
+def test_quiet_tick_persists_contracts_without_calling_narrator(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = _world(tmp_path)
+
+    def fail(_brief: dict) -> str:
+        raise AssertionError("quiet contract ticks do not call the narrator")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail)
+    tick_world(world)
+    offer = next(event for event in _events(world) if event["type"] == "contract_offer")
+    economy.accept_contract(world, offer["offer_id"], ["jordan-vale"])
+    tick_world(world)
+
+    day_two = [event for event in _events(world) if event.get("day") == 2]
+    assert day_two[0]["source"] == "payroll"
+    assert [event["type"] for event in day_two[1:3]] == [
+        "contract_offer",
+        "contract_progress",
+    ]
+    assert day_two[-1]["type"] == "quiet_day"
+    assert load_world(world).state["contracts"][offer["offer_id"]]["progress"] == 2
+
+
+def test_no_selected_storylet_persists_contract_receipts_without_narrator(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = _world(tmp_path)
+    (world / "data" / "incidents.toml").write_text(
+        """[[incidents]]
+id = "unmatched-incident"
+base_rate = 1.0
+rooms = ["break-room"]
+[[incidents.effects]]
+type = "incident_detail"
+name = "Unmatched incident"
+room = "break-room"
+morale_delta = -1
+norm_tags = []
+needs_cleanup = false
+""",
+        encoding="utf-8",
+    )
+
+    def fail(_brief: dict) -> str:
+        raise AssertionError("no-selected-storylet ticks do not call the narrator")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail)
+    tick_world(world)
+    events = _events(world)
+    assert events[0]["source"] == "payroll"
+    assert events[1]["type"] == "contract_offer"
+    assert events[2]["type"] == "incident"
+    assert events[-1]["type"] == "quiet_day"
+
+
 def test_old_world_without_contract_registry_loads_as_empty(tmp_path: Path) -> None:
     world = _world(tmp_path)
     state_path = world / "state" / "tower.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "contracts" in state
     state.pop("contracts")
+    state["reputation"] = 0
     jsonio.write_pretty_json(state_path, state)
+    (world / "data" / "contracts.toml").unlink()
+    initial = json.loads(json.dumps(state))
+    original_initial = json.loads(json.dumps(initial))
 
     assert load_world(world).state["contracts"] == {}
+    assert replay_events(initial, world / "events.jsonl") == load_world(world).state
+    assert initial == original_initial
+    tick_world(world)
+    assert replay_events(initial, world / "events.jsonl") == load_world(world).state
+    assert initial == original_initial

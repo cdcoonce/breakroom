@@ -180,6 +180,7 @@ def init_world(world: Path, seed: int) -> None:
             {"id": "open-office", "name": "Open Office", "kind": "work", "floor": 1},
         ],
         "characters": ["jordan-vale"],
+        "contracts": {},
         "edge_key_encoding": "json-pair-v1",
     }
     (world / "characters" / "jordan-vale.toml").write_text(
@@ -193,6 +194,10 @@ def init_world(world: Path, seed: int) -> None:
     )
     (world / "data" / "payroll.toml").write_text(
         files("breakroom").joinpath("data/payroll.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (world / "data" / "contracts.toml").write_text(
+        files("breakroom").joinpath("data/contracts.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     for filename, body in STARTER_STORYLETS.items():
