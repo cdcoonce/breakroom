@@ -107,6 +107,7 @@ def tick_world(world: Path) -> None:
             state=state,
             characters=loaded.characters,
             incident_events=incident_events,
+            storylet_history=state.get("storylet_history", {}),
         )
         selection = storylets.select_storylet(
             storylet_registry, context=context, seed=state["seed"], log=roll_log
