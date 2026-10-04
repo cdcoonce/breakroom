@@ -47,6 +47,8 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         for dial, delta in event["dials"].items():
             if dial not in next_state:
                 raise ValidationError(f"unknown dial: {dial}")
+            if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+                raise ValidationError(f"dial_delta event: {dial} delta must be an int or float")
             next_state[dial] += delta
     elif event_type == "edge_delta":
         next_state["day"] = max(next_state["day"], event["day"])
@@ -170,15 +172,25 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
         entry["value"] = value
         entry["cap"] = effective_cap
         entry["floor"] = effective_floor
-        entry["history"].append({"event_id": event_id, "delta": delta, "cap": cap, "floor": floor})
+        entry["history"].append(
+            {"event_id": event_id, "delta": delta, "cap": effective_cap, "floor": effective_floor}
+        )
 
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:
     state = copy.deepcopy(initial_state)
-    for line in events_path.read_text().splitlines():
+    for line_number, line in enumerate(events_path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
-        state = apply_event(state, json.loads(line))
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            checkout_root = Path(__file__).resolve().parents[2]
+            relative_path = events_path.resolve().relative_to(checkout_root, walk_up=True)
+            raise ValidationError(
+                f"{relative_path}: line {line_number}: invalid JSON"
+            ) from exc
+        state = apply_event(state, event)
     return state
 
 

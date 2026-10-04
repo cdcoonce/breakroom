@@ -1,0 +1,23 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py"],
+  "mutants": [
+    {
+      "label": "append incident events before validating the selected room",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "        incident_events.append(incident_event)\n        state = worldstate.apply_event(state, incident_event)",
+      "replace": "        incident_events.append(incident_event)\n        append_event(world, incident_event)\n        state = worldstate.apply_event(state, incident_event)"
+    },
+    {
+      "label": "[control] reorder local staging operations",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Appending the event to the local list and applying that same event to the local state are independent staging operations: selection later observes both completed values, and only the explicit append_event call makes anything durable. This holds for the tick paths exercised here; it does not claim safety against process termination between local Python statements.",
+      "find": "        incident_events.append(incident_event)\n        state = worldstate.apply_event(state, incident_event)",
+      "replace": "        state = worldstate.apply_event(state, incident_event)\n        incident_events.append(incident_event)"
+    }
+  ]
+}

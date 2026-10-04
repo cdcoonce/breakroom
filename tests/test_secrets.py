@@ -156,6 +156,61 @@ def test_read_secret_redacts_content_while_sealed(tmp_path: Path) -> None:
     assert public["holder"] == "jordan-vale"
 
 
+@pytest.mark.parametrize("truth", [True, False], ids=["true-secret", "false-secret"])
+def test_public_views_hide_truth_until_reveal_without_changing_private_records(
+    tmp_path: Path, truth: bool
+) -> None:
+    world = _new_world(tmp_path)
+    secret = _seal(world, is_true=truth, exposure_risk=1.0, knowers=["jordan-vale", "alex-chen"])
+    metadata = {
+        "id": "affair-1",
+        "holder": "jordan-vale",
+        "exposure_risk": 1.0,
+        "knowers": ["jordan-vale", "alex-chen"],
+        "state": "sealed",
+        "revealed_by": None,
+    }
+    private_record = {**metadata, "content": CONTENT, "is_true": truth}
+    store = _store_path(world)
+    sealed_bytes = store.read_bytes()
+
+    # Evaluate both entry points even if the first view violates the boundary.
+    sealed_views = (secret.public_view(), read_secret(world, secret.id))
+
+    for view in sealed_views:
+        assert "content" not in view
+        assert "is_true" not in view
+        assert view == metadata
+    assert secret.to_record() == private_record
+    assert secret.to_record()["is_true"] is truth
+    assert json.loads(store.read_text())[secret.id] == private_record
+    assert json.loads(store.read_text())[secret.id]["is_true"] is truth
+    assert store.read_bytes() == sealed_bytes
+
+    observable = maybe_reveal(
+        world, secret, day=1, rng=RngStream(seed=42, stream="exposure", tick=1)
+    )
+    assert observable.state == "observable"
+    observable_record = {
+        **private_record,
+        "state": "observable",
+        "revealed_by": {"type": "secret_reveal", "sequence": 1, "day": 1},
+    }
+    observable_bytes = store.read_bytes()
+
+    observable_views = (observable.public_view(), read_secret(world, observable.id))
+
+    for view in observable_views:
+        assert view == observable_record
+        assert view["content"] == CONTENT
+        assert view["is_true"] is truth
+    assert observable.to_record() == observable_record
+    assert observable.to_record()["is_true"] is truth
+    assert json.loads(store.read_text())[observable.id] == observable_record
+    assert json.loads(store.read_text())[observable.id]["is_true"] is truth
+    assert store.read_bytes() == observable_bytes
+
+
 def test_advance_exposure_only_moves_risk_when_deltas_are_supplied(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world, exposure_risk=0.25)
@@ -204,6 +259,31 @@ def test_advance_exposure_draws_are_bound_to_the_exposure_stream(tmp_path: Path)
 
     assert risks["base"] != risks["other_tick"]
     assert risks["base"] != risks["other_seed"]
+
+
+def test_advance_exposure_draws_are_bound_to_the_secret_id(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    first = _seal(world, id="affair-1", exposure_risk=0.0)
+    second = _seal(world, id="affair-2", exposure_risk=0.0)
+
+    first_risk = advance_exposure(
+        world, first, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+    second_risk = advance_exposure(
+        world, second, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+
+    assert 0.0 < first_risk < 0.3
+    assert 0.0 < second_risk < 0.3
+    assert first_risk != second_risk
+
+    repeat_world = _new_world(tmp_path, "repeat-tower")
+    repeat_start = _seal(repeat_world, id="affair-1", exposure_risk=0.0)
+    repeated_risk = advance_exposure(
+        repeat_world, repeat_start, seed=7, tick=3, deltas=[0.3]
+    ).exposure_risk
+
+    assert repeated_risk == first_risk
 
 
 def test_advance_exposure_persists_to_the_sealed_store(tmp_path: Path) -> None:
@@ -313,15 +393,87 @@ def test_maybe_reveal_is_idempotent_once_observable(tmp_path: Path) -> None:
     assert len(_read_events(world)) == 1
 
 
+def test_maybe_reveal_uses_persisted_risk_for_threshold_and_provenance(
+    tmp_path: Path,
+) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=0.0)
+    advanced = advance_exposure(world, stale, seed=1, tick=1, deltas=[1.0] * 4)
+    assert advanced.exposure_risk > REVEAL_THRESHOLD
+
+    log = RollLog()
+    revealed = maybe_reveal(
+        world,
+        stale,
+        day=1,
+        rng=RngStream(seed=1, stream="exposure", tick=1, log=log),
+    )
+
+    assert revealed.state == "observable"
+    assert log.records[0]["purpose"] == "reveal"
+    assert log.records[0]["primitive"] == "bernoulli"
+    event = _read_events(world)[0]
+    assert event["provenance"]["exposure_risk"] == advanced.exposure_risk
+    assert revealed.exposure_risk == advanced.exposure_risk
+    assert read_secret(world, stale.id)["exposure_risk"] == advanced.exposure_risk
+
+
+def test_maybe_reveal_uses_persisted_risk_for_draw_probability(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=0.8)
+    store_path = _store_path(world)
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+    store[stale.id]["exposure_risk"] = 0.9
+    store_path.write_text(json.dumps(store), encoding="utf-8")
+
+    log = RollLog()
+    revealed = maybe_reveal(
+        world,
+        stale,
+        day=1,
+        rng=RngStream(seed=3, stream="exposure", tick=19, log=log),
+    )
+
+    assert log.records == [
+        {
+            "stream": "exposure",
+            "tick": 19,
+            "purpose": "reveal",
+            "primitive": "bernoulli",
+            "result": True,
+        }
+    ]
+    assert revealed.state == "observable"
+    assert revealed.exposure_risk == 0.9
+    assert _read_events(world)[0]["provenance"]["exposure_risk"] == 0.9
+
+
+def test_maybe_reveal_ignores_a_stale_sealed_handle_after_reveal(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    stale = _seal(world, exposure_risk=1.0)
+    revealed = maybe_reveal(
+        world, stale, day=1, rng=RngStream(seed=1, stream="exposure", tick=1)
+    )
+    events = _read_events(world)
+    assert revealed.state == "observable"
+
+    result = maybe_reveal(
+        world, stale, day=2, rng=RngStream(seed=1, stream="exposure", tick=2)
+    )
+
+    assert result is stale
+    assert _read_events(world) == events
+
+
 def test_maybe_reveal_preserves_exposure_risk_advanced_through_a_stale_handle(
     tmp_path: Path,
 ) -> None:
     world = _new_world(tmp_path)
     secret = _seal(world)
-    first_handle = advance_exposure(world, secret, seed=1, tick=1, deltas=[1.0] * 4)
+    first_handle = advance_exposure(world, secret, seed=6, tick=1, deltas=[1.0])
     assert REVEAL_THRESHOLD <= first_handle.exposure_risk < 1.0
 
-    second_handle = advance_exposure(world, first_handle, seed=1, tick=2, deltas=[1.0] * 4)
+    second_handle = advance_exposure(world, first_handle, seed=6, tick=2, deltas=[1.0])
     assert second_handle.exposure_risk > first_handle.exposure_risk
 
     revealed = maybe_reveal(

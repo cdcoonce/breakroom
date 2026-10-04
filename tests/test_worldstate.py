@@ -139,6 +139,20 @@ def test_replaying_event_log_reproduces_current_state(tmp_path: Path) -> None:
     assert replay_events(initial, world / "events.jsonl") == load_world(world).state
 
 
+def test_replay_events_reports_malformed_json_file_and_physical_line(tmp_path: Path) -> None:
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text("\n{not json}\n", encoding="utf-8")
+    checkout_root = Path(__file__).resolve().parents[1]
+
+    with pytest.raises(ValidationError) as error:
+        replay_events({"day": 0}, events_path)
+
+    reported_path, _, detail = str(error.value).partition(": ")
+    assert not Path(reported_path).is_absolute()
+    assert (checkout_root / reported_path).resolve() == events_path.resolve()
+    assert detail.startswith("line 2:")
+
+
 def test_snapshot_write_load_compare_is_lossless(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
@@ -209,6 +223,29 @@ def test_dial_delta_with_unknown_dial_is_rejected() -> None:
 
     with pytest.raises(ValidationError, match="unknown_dial"):
         apply_event(state, event)
+
+
+@pytest.mark.parametrize("delta", ["5", None, [5], True, False])
+def test_dial_delta_rejects_non_numeric_delta_types(delta: object) -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": delta}}
+
+    with pytest.raises(ValidationError, match="budget.*int or float"):
+        apply_event(state, event)
+
+
+def test_dial_delta_applies_integer_delta() -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": 3}}
+
+    assert apply_event(state, event)["budget"] == 13
+
+
+def test_dial_delta_applies_float_delta() -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": 1.5}}
+
+    assert apply_event(state, event)["budget"] == 11.5
 
 
 def test_edge_delta_without_event_id_is_rejected() -> None:
@@ -391,6 +428,12 @@ def test_strictest_permanent_cap_wins_and_a_later_scar_cannot_loosen_it() -> Non
     qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
     assert qualities["trust"]["cap"] == -5
     assert qualities["trust"]["value"] == -5
+    assert qualities["trust"]["history"][1] == {
+        "event_id": "evt-looser",
+        "delta": 8,
+        "cap": -5,
+        "floor": None,
+    }
 
 
 def test_permanent_floor_scar_holds_recovery_under_later_negative_delta() -> None:
@@ -444,6 +487,12 @@ def test_strictest_permanent_floor_wins_and_a_later_scar_cannot_loosen_it() -> N
     qualities = edge_qualities(state, "jordan-vale", "sam-oduya")
     assert qualities["fear"]["floor"] == 5
     assert qualities["fear"]["value"] == 5
+    assert qualities["fear"]["history"][1] == {
+        "event_id": "evt-looser",
+        "delta": -8,
+        "cap": None,
+        "floor": 5,
+    }
 
 
 def test_cap_and_floor_accumulate_independently_and_pin_value_when_equal() -> None:
@@ -493,6 +542,69 @@ def test_cap_and_floor_accumulate_independently_and_pin_value_when_equal() -> No
 
     state = apply_event(state, push_down)
     assert edge_qualities(state, "jordan-vale", "sam-oduya")["rivalry"]["value"] == 4
+
+
+@pytest.mark.parametrize(
+    ("quality", "bound_name", "bound_value", "later_delta", "expected_cap", "expected_floor"),
+    [
+        pytest.param("trust", "cap", -5, 8, -5, None, id="inherited-cap"),
+        pytest.param("fear", "floor", 5, -8, None, 5, id="inherited-floor"),
+    ],
+)
+def test_delta_only_history_keeps_inherited_bounds_and_prior_provenance(
+    quality: str,
+    bound_name: str,
+    bound_value: int,
+    later_delta: int,
+    expected_cap: int | None,
+    expected_floor: int | None,
+) -> None:
+    scar = {
+        "type": "edge_delta",
+        "day": 1,
+        "event_id": "evt-bound",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {quality: {"delta": bound_value, bound_name: bound_value}},
+    }
+    delta_only = {
+        "type": "edge_delta",
+        "day": 2,
+        "event_id": "evt-delta",
+        "from": "jordan-vale",
+        "to": "sam-oduya",
+        "edges": {quality: {"delta": later_delta}},
+    }
+    scarred = apply_event({"day": 0}, scar)
+    first_row = {
+        "event_id": "evt-bound",
+        "delta": bound_value,
+        "cap": expected_cap,
+        "floor": expected_floor,
+    }
+    assert edge_qualities(scarred, "jordan-vale", "sam-oduya")[quality]["history"] == [first_row]
+    assert edge_provenance(scarred, "jordan-vale", "sam-oduya", quality) == ["evt-bound"]
+
+    updated = apply_event(scarred, delta_only)
+
+    entry = edge_qualities(updated, "jordan-vale", "sam-oduya")[quality]
+    assert entry["value"] == bound_value
+    assert entry["cap"] == expected_cap
+    assert entry["floor"] == expected_floor
+    assert entry["history"] == [
+        first_row,
+        {
+            "event_id": "evt-delta",
+            "delta": later_delta,
+            "cap": expected_cap,
+            "floor": expected_floor,
+        },
+    ]
+    assert edge_qualities(scarred, "jordan-vale", "sam-oduya")[quality]["history"] == [first_row]
+    assert edge_provenance(updated, "jordan-vale", "sam-oduya", quality) == [
+        "evt-bound",
+        "evt-delta",
+    ]
 
 
 def test_single_change_with_floor_above_cap_is_rejected() -> None:
