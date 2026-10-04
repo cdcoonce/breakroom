@@ -172,7 +172,9 @@ def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
         entry["value"] = value
         entry["cap"] = effective_cap
         entry["floor"] = effective_floor
-        entry["history"].append({"event_id": event_id, "delta": delta, "cap": cap, "floor": floor})
+        entry["history"].append(
+            {"event_id": event_id, "delta": delta, "cap": effective_cap, "floor": effective_floor}
+        )
 
 
 def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str, Any]:

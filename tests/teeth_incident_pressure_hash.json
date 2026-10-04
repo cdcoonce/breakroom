@@ -1,0 +1,36 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_decisions.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_decisions.py"
+  ],
+  "mutants": [
+    {
+      "label": "drop incident pressure from hashed context",
+      "file": "../src/breakroom/decisions.py",
+      "oracle": "real",
+      "find": "\"pressure\": incident_record.get(\"pressure\", []),\n        \"relationship_edges\": relationship_edges,",
+      "replace": "\"pressure\": [],\n        \"relationship_edges\": relationship_edges,"
+    },
+    {
+      "label": "[control] use list() for the empty pressure default",
+      "file": "../src/breakroom/decisions.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "When pressure is absent, list() and [] both produce a fresh empty list, so the returned context value and its hash are identical on every path; this control says nothing about changing the default to a non-empty value.",
+      "find": "\"pressure\": incident_record.get(\"pressure\", []),\n        \"relationship_edges\": relationship_edges,",
+      "replace": "\"pressure\": incident_record.get(\"pressure\", list()),\n        \"relationship_edges\": relationship_edges,"
+    }
+  ]
+}

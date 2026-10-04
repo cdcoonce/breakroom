@@ -247,6 +247,7 @@ def assemble_incident_context(
         "candidate_norm_ids": _relevant_norm_ids(
             registry, incident_record, character, state=state, events=events
         ),
+        "pressure": incident_record.get("pressure", []),
         "relationship_edges": relationship_edges,
     }
 

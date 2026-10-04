@@ -1,0 +1,50 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_construction.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_construction.py"
+  ],
+  "mutants": [
+    {
+      "label": "remove room type id validation",
+      "file": "../src/breakroom/construction.py",
+      "oracle": "real",
+      "find": "if not isinstance(raw[\"id\"], str) or not raw[\"id\"]:",
+      "replace": "if False:"
+    },
+    {
+      "label": "remove room type slots type validation",
+      "file": "../src/breakroom/construction.py",
+      "oracle": "real",
+      "find": "if type(raw[\"slots\"]) is not int:",
+      "replace": "if False:"
+    },
+    {
+      "label": "allow boolean room type slots",
+      "file": "../src/breakroom/construction.py",
+      "oracle": "real",
+      "find": "if type(raw[\"slots\"]) is not int:",
+      "replace": "if not isinstance(raw[\"slots\"], int):"
+    },
+    {
+      "label": "[control] spell empty id comparison explicitly",
+      "file": "../src/breakroom/construction.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "For every string id, testing equality with the empty string is equivalent to the existing truthiness check; non-string ids are rejected by the preceding type clause. This holds for all loader paths, though different implementations can differ for custom truthiness objects that TOML cannot produce.",
+      "find": "if not isinstance(raw[\"id\"], str) or not raw[\"id\"]:",
+      "replace": "if not isinstance(raw[\"id\"], str) or raw[\"id\"] == \"\":"
+    }
+  ]
+}
