@@ -1,0 +1,39 @@
+{
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_incidents.py",
+    "-k", "unorderable_gte or unorderable_lte or comparable_precondition or eq_and_missing_path"
+  ],
+  "collect_command": [
+    "uv", "run", "pytest", "--collect-only", "-q", "tests/test_incidents.py",
+    "-k", "unorderable_gte or unorderable_lte or comparable_precondition or eq_and_missing_path"
+  ],
+  "mutants": [
+    {
+      "label": "stop converting ordering TypeErrors",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "except TypeError as exc:",
+      "replace": "except ValueError as exc:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "Both ordering operators must translate an unorderable runtime value into the canonical ValidationError rather than leaking TypeError."
+    },
+    {
+      "label": "omit configured value from diagnostic",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "f\"cannot compare {value!r} with {precondition.value!r}\"",
+      "replace": "f\"cannot compare {value!r}\"",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "The runtime diagnostic must include both values so operators can identify the invalid comparison."
+    },
+    {
+      "label": "equivalent gte string comparison",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "if precondition.operator == \"gte\":",
+      "replace": "if \"gte\" == precondition.operator:",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Harmless control: equality is symmetric, so reversing the operands preserves behavior for every operator string."
+    }
+  ]
+}

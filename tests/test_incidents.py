@@ -328,6 +328,100 @@ def test_evaluate_tick_skips_incidents_whose_preconditions_fail(tmp_path: Path) 
     assert _fired_ids(allowed) == {"coffee-spill", "printer-jam"}
 
 
+def test_evaluate_tick_reports_unorderable_gte_precondition_values(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_table(world)
+    table = load_incident_table(world)
+
+    with pytest.raises(ValidationError) as exc:
+        evaluate_tick(table, state={"morale": "ready"}, seed=4, tick=3)
+
+    message = str(exc.value)
+    assert "morale" in message
+    assert "gte" in message
+    assert "ready" in message
+    assert "0" in message
+
+
+def test_evaluate_tick_reports_unorderable_lte_precondition_values(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 1.0\n'
+        'preconditions = [{ path = "morale", operator = "lte", value = 0 }]\n',
+    )
+    table = load_incident_table(world)
+
+    with pytest.raises(ValidationError) as exc:
+        evaluate_tick(table, state={"morale": "ready"}, seed=4, tick=3)
+
+    message = str(exc.value)
+    assert "morale" in message
+    assert "lte" in message
+    assert "ready" in message
+    assert "0" in message
+
+
+@pytest.mark.parametrize(
+    ("operator", "state_value", "configured_value", "expected_fired"),
+    [
+        ("gte", 5, "0", True),
+        ("gte", -5, "0", False),
+        ("lte", -5, "0", True),
+        ("lte", 5, "0", False),
+        ("gte", "ready", '"m"', True),
+        ("lte", "ready", '"z"', True),
+    ],
+)
+def test_evaluate_tick_preserves_comparable_precondition_results(
+    tmp_path: Path,
+    operator: str,
+    state_value: int | str,
+    configured_value: str,
+    expected_fired: bool,
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 1.0\n'
+        f'preconditions = [{{ path = "morale", operator = "{operator}", '
+        f"value = {configured_value} }}]\n",
+    )
+    table = load_incident_table(world)
+
+    resolution = evaluate_tick(table, state={"morale": state_value}, seed=4, tick=3)
+
+    assert _fired_ids(resolution) == ({"coffee-spill"} if expected_fired else set())
+
+
+@pytest.mark.parametrize(
+    ("path", "operator", "state", "expected_fired"),
+    [
+        ("morale", "eq", {"morale": 5}, True),
+        ("morale", "eq", {"morale": 6}, False),
+        ("unresolved.value", "gte", {}, False),
+    ],
+)
+def test_evaluate_tick_preserves_eq_and_missing_path_behavior(
+    tmp_path: Path,
+    path: str,
+    operator: str,
+    state: dict[str, int],
+    expected_fired: bool,
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 1.0\n'
+        f'preconditions = [{{ path = "{path}", operator = "{operator}", value = 5 }}]\n',
+    )
+    table = load_incident_table(world)
+
+    resolution = evaluate_tick(table, state=state, seed=4, tick=3)
+
+    assert _fired_ids(resolution) == ({"coffee-spill"} if expected_fired else set())
+
+
 def _fired_ids(resolution: IncidentResolution) -> set[str]:
     return {
         member["incident_id"] for cascade in resolution.cascades for member in cascade["members"]
