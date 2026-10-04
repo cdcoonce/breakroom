@@ -137,10 +137,6 @@ def tick_world(world: Path) -> None:
                         f"{spotlight_incident['room']!r}, which is missing from tower state"
                     ) from None
 
-            # Keep incident receipts in their original order, but don't make them
-            # durable until the selected spotlight room has been validated.
-            _append_incident_events(world, incident_events)
-
             character_ids: list[str] = []
             for slot in selection.storylet.participants:
                 for participant_id in selection.participants.get(slot.slot, []):
@@ -171,6 +167,7 @@ def tick_world(world: Path) -> None:
                 },
             }
             prose = render_scene(brief)
+            _append_incident_events(world, incident_events)
             scene_event: dict[str, Any] = {
                 "type": "scene",
                 "day": day,

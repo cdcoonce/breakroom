@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from breakroom import storylets
+from breakroom import storylets, worldstate
 from breakroom.cli import main
 from breakroom.events import append_event
 from breakroom.init import init_world
@@ -149,6 +149,58 @@ def test_tick_emits_one_incident_event_per_fired_incident_and_one_scene(
         "awkward-silence",
     }
     assert len(events_of(world, "scene")) == 1
+
+
+def test_failed_narration_leaves_incident_receipts_for_a_successful_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+
+    events_path = world / "events.jsonl"
+    tower_path = world / "state" / "tower.json"
+    prior_event = append_event(
+        world,
+        {
+            "type": "incident",
+            "day": 0,
+            "incident": {"id": "unrelated-prior-incident", "morale_delta": 0},
+        },
+    )
+    events_before_failure = events_path.read_bytes()
+    state_before_failure = tower_path.read_bytes()
+    pre_tick_state = json.loads(state_before_failure)
+
+    def fail_narration(_brief: dict) -> str:
+        raise RuntimeError("narrator unavailable")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", fail_narration)
+    with pytest.raises(RuntimeError, match="narrator unavailable"):
+        tick_world(world)
+
+    assert events_path.read_bytes() == events_before_failure
+    assert tower_path.read_bytes() == state_before_failure
+
+    monkeypatch.setattr("breakroom.tick.render_scene", lambda _brief: "A recovered scene.")
+    tick_world(world)
+
+    saved_state = json.loads(tower_path.read_text())
+    assert saved_state["day"] == 1
+    events = read_jsonl(events_path)
+    assert events[0] == prior_event
+    day_one_events = [event for event in events if event.get("day") == 1]
+    assert [event["type"] for event in day_one_events] == [
+        "incident",
+        "incident",
+        "incident",
+        "scene",
+    ]
+    assert sorted(
+        event["incident"]["id"]
+        for event in day_one_events
+        if event["type"] == "incident"
+    ) == sorted(STARTER_INCIDENT_ROOMS)
+    assert worldstate.replay_events(pre_tick_state, events_path) == saved_state
 
 
 def test_a_tick_where_no_incident_fires_is_a_quiet_day_not_a_crash(

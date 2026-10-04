@@ -1,0 +1,43 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_tick_incidents.py::test_failed_narration_leaves_incident_receipts_for_a_successful_retry"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_tick_incidents.py::test_failed_narration_leaves_incident_receipts_for_a_successful_retry"
+  ],
+  "mutants": [
+    {
+      "label": "append incident receipts before narration",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            prose = render_scene(brief)\n            _append_incident_events(world, incident_events)",
+      "replace": "            _append_incident_events(world, incident_events)\n            prose = render_scene(brief)"
+    },
+    {
+      "label": "omit selected-storylet incident receipts",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            _append_incident_events(world, incident_events)\n            scene_event: dict[str, Any] = {",
+      "replace": "            scene_event: dict[str, Any] = {"
+    },
+    {
+      "label": "[control] reorder scene event keys",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "JSON object key order is not observed by the retry behavior or replay; field names and values remain identical. This holds for the integration paths in this suite and does not claim byte-for-byte scene serialization stability.",
+      "find": "            scene_event: dict[str, Any] = {\n                \"type\": \"scene\",\n                \"day\": day,",
+      "replace": "            scene_event: dict[str, Any] = {\n                \"day\": day,\n                \"type\": \"scene\","
+    }
+  ]
+}
