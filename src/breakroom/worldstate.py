@@ -203,6 +203,8 @@ def replay_events(initial_state: dict[str, Any], events_path: Path) -> dict[str,
 
 
 def write_snapshot(world: Path, state: dict[str, Any], name: str) -> Path:
+    if "/" in name or "\\" in name or name == "..":
+        raise ValidationError(f"invalid snapshot name: {name!r}")
     snapshots = world / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     path = snapshots / f"{name}.json"

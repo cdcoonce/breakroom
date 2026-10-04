@@ -1,0 +1,46 @@
+{
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_worldstate.py",
+    "-k",
+    "write_snapshot_rejects_path_names_before_creating_files or write_snapshot_preserves_other_double_dot_names"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_worldstate.py",
+    "-k",
+    "write_snapshot_rejects_path_names_before_creating_files or write_snapshot_preserves_other_double_dot_names"
+  ],
+  "mutants": [
+    {
+      "label": "remove name guard",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "    if \"/\" in name or \"\\\\\" in name or name == \"..\":\n        raise ValidationError(f\"invalid snapshot name: {name!r}\")\n",
+      "replace": "",
+      "oracle": "real"
+    },
+    {
+      "label": "validate after mkdir",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "    if \"/\" in name or \"\\\\\" in name or name == \"..\":\n        raise ValidationError(f\"invalid snapshot name: {name!r}\")\n",
+      "replace": "    snapshots = world / \"snapshots\"\n    snapshots.mkdir(parents=True, exist_ok=True)\n    if \"/\" in name or \"\\\\\" in name or name == \"..\":\n        raise ValidationError(f\"invalid snapshot name: {name!r}\")\n",
+      "oracle": "real"
+    },
+    {
+      "label": "message-only control",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "raise ValidationError(f\"invalid snapshot name: {name!r}\")",
+      "replace": "raise ValidationError(f\"invalid snapshot name {name!r}\")",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The contract asserts the error type and filesystem effect, not punctuation in its message."
+    }
+  ]
+}
