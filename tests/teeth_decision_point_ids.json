@@ -1,0 +1,29 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_storylets.py", "-k",
+    "duplicate_decision_point_ids_within_storylet or distinct_decision_point_order_and_fields or decision_point_id_reuse_across_storylets"
+  ],
+  "collect_command": [
+    "uv", "run", "pytest", "--collect-only", "-q", "tests/test_storylets.py", "-k",
+    "duplicate_decision_point_ids_within_storylet or distinct_decision_point_order_and_fields or decision_point_id_reuse_across_storylets"
+  ],
+  "mutants": [
+    {
+      "label": "accept duplicate decision-point IDs",
+      "file": "../src/breakroom/storylets.py",
+      "find": "        if entry[\"id\"] in seen_ids:\n            raise ValidationError(\n                f\"{source}: duplicate decision_point id {entry['id']!r} for {storylet_id}\"\n            )\n        seen_ids.add(entry[\"id\"])\n",
+      "replace": "        seen_ids.add(entry[\"id\"])\n",
+      "oracle": "real"
+    },
+    {
+      "label": "[control] remove local set type annotation",
+      "file": "../src/breakroom/storylets.py",
+      "find": "    seen_ids: set[str] = set()",
+      "replace": "    seen_ids = set()",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The annotation has no runtime effect; removing it preserves the local set and duplicate check behavior."
+    }
+  ]
+}
