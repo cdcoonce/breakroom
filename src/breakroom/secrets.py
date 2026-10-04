@@ -53,10 +53,14 @@ class Secret:
         }
 
     def public_view(self) -> dict[str, Any]:
-        """The record as it may leave this module: sealed content stays sealed."""
+        """Return metadata while keeping sealed content and is_true private.
+
+        Observable secrets include their complete original record.
+        """
         record = self.to_record()
         if self.state == "sealed":
             record.pop("content")
+            record.pop("is_true")
         return record
 
 
@@ -204,7 +208,10 @@ def maybe_reveal(
 
 
 def read_secret(world: Path, secret_id: str) -> dict[str, Any]:
-    """Read a stored secret as public state; sealed content is never returned."""
+    """Read public state, retaining metadata and redacting sealed content/is_true.
+
+    Observable secrets include their complete original record.
+    """
     store = _load_store(world)
     record = store.get(secret_id)
     if record is None:
