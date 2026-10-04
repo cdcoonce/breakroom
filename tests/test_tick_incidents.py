@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from breakroom.cli import main
+from breakroom.events import append_event
 from breakroom.init import init_world
 from breakroom.resolution.incidents import load_incident_table
 from breakroom.tick import QUIET_DAY_PROSE, TickError, tick_world
@@ -78,9 +79,22 @@ def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
     assert main(["init", "--world", str(world), "--seed", "42"]) == 0
 
     tower_path = world / "state" / "tower.json"
-    tower_state = json.loads(tower_path.read_text())
+    original_state_bytes = tower_path.read_bytes()
+    tower_state = json.loads(original_state_bytes)
     tower_state["rooms"] = []
     tower_path.write_text(json.dumps(tower_state))
+    failed_state_bytes = tower_path.read_bytes()
+
+    unrelated_incident = append_event(
+        world,
+        {
+            "type": "incident",
+            "day": 0,
+            "incident": {"id": "unrelated-prior-incident"},
+        },
+    )
+    events_path = world / "events.jsonl"
+    events_before_failure = events_path.read_bytes()
 
     with pytest.raises(TickError) as exc_info:
         main(["tick", "--world", str(world)])
@@ -90,7 +104,32 @@ def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
         incident_id for incident_id in STARTER_INCIDENT_ROOMS if incident_id in message
     ]
     assert len(matched_incident_ids) == 1
-    assert STARTER_INCIDENT_ROOMS[matched_incident_ids[0]] in message
+    spotlight_room = STARTER_INCIDENT_ROOMS[matched_incident_ids[0]]
+    assert spotlight_room in message
+    assert events_path.read_bytes() == events_before_failure
+    assert tower_path.read_bytes() == failed_state_bytes
+
+    # Repair only the missing dependency and retry the same day. The failed attempt
+    # must not leave orphan incident receipts that the retry would duplicate.
+    tower_path.write_bytes(original_state_bytes)
+    assert main(["tick", "--world", str(world)]) == 0
+
+    saved_state = json.loads(tower_path.read_text())
+    assert saved_state["day"] == 1
+    events = read_jsonl(events_path)
+    assert events[0] == unrelated_incident
+    day_one_events = [event for event in events if event.get("day") == 1]
+    assert [event["type"] for event in day_one_events] == [
+        "incident",
+        "incident",
+        "incident",
+        "scene",
+    ]
+    assert sorted(
+        event["incident"]["id"]
+        for event in day_one_events
+        if event["type"] == "incident"
+    ) == sorted(STARTER_INCIDENT_ROOMS)
 
 
 def test_tick_emits_one_incident_event_per_fired_incident_and_one_scene(
