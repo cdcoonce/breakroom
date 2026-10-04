@@ -8,6 +8,7 @@ from typing import Any
 from breakroom import jsonio
 from breakroom.events import append_event
 from breakroom.resolution.rng import RngStream
+from breakroom.worldstate import ValidationError as WorldstateValidationError
 
 REVEAL_THRESHOLD = 0.8
 NEAR_EXPOSURE_THRESHOLD = 0.6
@@ -76,8 +77,8 @@ def seal_secret(
 ) -> Secret:
     """Create a sealed secret in the gitignored per-tower store."""
     store = _load_store(world)
-    if id in store:
-        raise ValidationError(f"secret already sealed: {id}")
+    if knowers is not None and not isinstance(knowers, list):
+        raise WorldstateValidationError("knowers must be a list")
     secret = Secret(
         id=id,
         holder=holder,
@@ -88,7 +89,14 @@ def seal_secret(
         state="sealed",
         revealed_by=None,
     )
-    store[id] = secret.to_record()
+    record = secret.to_record()
+    try:
+        _validate_record(_store_path(world), id, record)
+    except ValidationError as exc:
+        raise WorldstateValidationError(str(exc)) from exc
+    if id in store:
+        raise ValidationError(f"secret already sealed: {id}")
+    store[id] = record
     _save_store(world, store)
     return secret
 

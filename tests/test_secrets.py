@@ -16,6 +16,7 @@ from breakroom.secrets import (
     read_secret,
     seal_secret,
 )
+from breakroom.worldstate import ValidationError as WorldstateValidationError
 
 CONTENT = "Jordan is quietly job-hunting."
 
@@ -96,6 +97,36 @@ def test_seal_secret_rejects_duplicate_id(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="already sealed"):
         _seal(world)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", ["unhashable-id"]),
+        ("id", 17),
+        ("holder", 17),
+        ("content", 17),
+        ("is_true", 1),
+        ("knowers", ("alex-chen",)),
+        ("knowers", 17),
+    ],
+)
+def test_seal_secret_rejects_invalid_input_without_changing_store(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    world = _new_world(tmp_path)
+    _seal(world)
+    before_public = read_secret(world, "affair-1")
+    assert before_public["id"] == "affair-1"
+    store = _store_path(world)
+    original_bytes = store.read_bytes()
+    kwargs = {"id": "new-secret", field: value}
+
+    with pytest.raises(WorldstateValidationError):
+        _seal(world, **kwargs)
+
+    assert store.read_bytes() == original_bytes
+    assert read_secret(world, "affair-1") == before_public
 
 
 def test_malformed_store_raises_validation_error(tmp_path: Path) -> None:
