@@ -1,0 +1,35 @@
+{
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_incidents.py::test_evaluate_tick_emits_mutual_cycle_once_per_cascade"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_incidents.py::test_evaluate_tick_emits_mutual_cycle_once_per_cascade"
+  ],
+  "mutants": [
+    {
+      "label": "Remove the per-cascade duplicate incident guard",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "    if incident.id in emitted_incident_ids:\n        return\n    emitted_incident_ids.add(incident.id)",
+      "replace": "    emitted_incident_ids.add(incident.id)",
+      "oracle": "real"
+    },
+    {
+      "label": "[control] Swap independent local result-list initializers",
+      "file": "../src/breakroom/resolution/incidents.py",
+      "find": "    events: list[dict[str, Any]] = []\n    cascades: list[dict[str, Any]] = []",
+      "replace": "    cascades: list[dict[str, Any]] = []\n    events: list[dict[str, Any]] = []",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The two fresh local lists are independent objects initialized before the loop; exchanging their assignments cannot affect traversal or result ordering, and neither initializer has side effects."
+    }
+  ]
+}
