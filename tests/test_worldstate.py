@@ -95,6 +95,59 @@ def test_init_world_refuses_to_reinitialize_existing_world(tmp_path: Path) -> No
     assert state_after == state_before
 
 
+@pytest.mark.parametrize(
+    "failed_relative_path",
+    ["data/storylets/quiet-room.toml", "events.jsonl"],
+)
+def test_init_world_retries_after_late_scaffold_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_relative_path: str
+) -> None:
+    world = tmp_path / "tower"
+    failed_path = world / failed_relative_path
+    original_write_text = Path.write_text
+    failed = False
+
+    def fail_scaffold_write_once(path: Path, *args, **kwargs):
+        nonlocal failed
+        if path == failed_path and not failed:
+            failed = True
+            raise OSError("injected late scaffold failure")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_scaffold_write_once)
+
+    with pytest.raises(OSError, match="injected late scaffold failure"):
+        init_world(world, seed=42)
+
+    assert failed
+    assert not (world / "state" / "tower.json").exists()
+    assert (world / "characters" / "jordan-vale.toml").exists()
+    assert (world / "data" / "norms.toml").exists()
+    assert (world / "data" / "incidents.toml").exists()
+    storylet_directory = world / "data" / "storylets"
+    expected_storylets = {
+        "shared-space-repair.toml",
+        "stuck-workflow.toml",
+        "quiet-room.toml",
+    }
+    written_storylets = {path.name for path in storylet_directory.glob("*.toml")}
+    if failed_relative_path.endswith("quiet-room.toml"):
+        assert written_storylets == expected_storylets - {"quiet-room.toml"}
+    else:
+        assert written_storylets == expected_storylets
+
+    init_world(world, seed=42)
+
+    assert (world / "characters" / "jordan-vale.toml").exists()
+    assert (world / "data" / "norms.toml").exists()
+    assert (world / "data" / "incidents.toml").exists()
+    assert {path.name for path in storylet_directory.glob("*.toml")} == expected_storylets
+    assert (world / "events.jsonl").read_text(encoding="utf-8") == ""
+    state = json.loads((world / "state" / "tower.json").read_text(encoding="utf-8"))
+    assert state["seed"] == 42
+    assert state["day"] == 0
+
+
 def test_load_world_rejects_non_int_scalar_field(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     init_world(world, seed=42)
@@ -954,3 +1007,41 @@ def test_character_quality_empty_name_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="trait:"):
         load_world(world)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "incident", "day": 1},
+        {"type": "incident", "day": 1, "incident": []},
+        {"type": "incident", "day": 1, "incident": {"morale_delta": "-2"}},
+        {"type": "incident", "day": 1, "incident": {"morale_delta": True}},
+    ],
+)
+def test_apply_event_rejects_malformed_incident_payload(event: dict) -> None:
+    with pytest.raises(ValidationError):
+        apply_event({"day": 0, "morale": 50}, event)
+
+
+def test_replay_events_rejects_malformed_incident_payload(tmp_path: Path) -> None:
+    event = {"type": "incident", "day": 1, "incident": []}
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        replay_events({"day": 0, "morale": 50}, path)
+
+
+@pytest.mark.parametrize(
+    ("incident", "expected_morale"),
+    [({}, 50), ({"morale_delta": -2}, 48), ({"morale_delta": -2.5}, 47.5)],
+)
+def test_apply_event_keeps_valid_incident_morale_delta_behavior(
+    incident: dict, expected_morale: float
+) -> None:
+    event = {"type": "incident", "day": 1, "incident": incident}
+
+    result = apply_event({"day": 0, "morale": 50}, event)
+
+    assert result["day"] == 1
+    assert result["morale"] == expected_morale

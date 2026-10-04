@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from breakroom import storylets
 from breakroom.cli import main
 from breakroom.events import append_event
 from breakroom.init import init_world
@@ -179,6 +180,66 @@ def test_a_quiet_day_still_advances_the_day_and_writes_a_scene_free_chronicle(
     assert "None" not in chronicle.split("## Trace")[0]
 
 
+def test_fired_incident_without_eligible_storylet_gets_factual_chronicle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+    incident_table = world / "data" / "incidents.toml"
+    text, replacements = re.subn(
+        r'(id = "(?:coffee-spill|printer-jam)"\nbase_rate = )1\.0',
+        r"\g<1>0.0",
+        incident_table.read_text(),
+    )
+    assert replacements == 2
+    incident_table.write_text(text)
+
+    selections = []
+    real_select_storylet = storylets.select_storylet
+
+    def observe_selection(*args, **kwargs):
+        selection = real_select_storylet(*args, **kwargs)
+        selections.append(selection)
+        return selection
+
+    monkeypatch.setattr(storylets, "select_storylet", observe_selection)
+    narrator_calls = []
+
+    def reject_narration(_brief):
+        narrator_calls.append(True)
+        raise AssertionError("fired incident without an eligible storylet has no scene")
+
+    monkeypatch.setattr("breakroom.tick.render_scene", reject_narration)
+    starting_morale = json.loads((world / "state" / "tower.json").read_text())["morale"]
+
+    assert main(["tick", "--world", str(world)]) == 0
+
+    assert selections == [None]
+    assert narrator_calls == []
+    incident_events = events_of(world, "incident")
+    assert len(incident_events) == 1
+    incident = incident_events[0]["incident"]
+    assert incident["id"] == "awkward-silence"
+    assert incident["needs_cleanup"] is False
+    assert incident["cleanup_owner"] is None
+    state = json.loads((world / "state" / "tower.json").read_text())
+    assert state["day"] == 1
+    assert state["morale"] == starting_morale + incident["morale_delta"]
+
+    quiet_events = events_of(world, "quiet_day")
+    assert len(quiet_events) == 1
+    assert quiet_events[0]["day"] == 1
+    rolls = quiet_events[0]["rolls"]
+    assert len(rolls) == 3
+    assert all(record["stream"] == "incidents" and record["tick"] == 1 for record in rolls)
+    assert sorted(record["result"] for record in rolls) == [False, False, True]
+    assert events_of(world, "scene") == []
+
+    chronicle = (world / "chronicles" / "day-0001.md").read_text()
+    assert "Incidents fired today." in chronicle
+    assert QUIET_DAY_PROSE not in chronicle
+
+
 def test_a_quiet_day_records_the_rolls_that_made_it_quiet(tmp_path: Path, stub_narrator) -> None:
     world = tmp_path / "tower"
     assert main(["init", "--world", str(world), "--seed", "42"]) == 0
@@ -207,6 +268,66 @@ def test_a_quiet_day_never_calls_the_narrator(tmp_path: Path, monkeypatch) -> No
     silence_incidents(world)
 
     assert main(["tick", "--world", str(world)]) == 0
+
+
+def test_storylet_min_tick_gap_persists_across_real_ticks(tmp_path: Path, stub_narrator) -> None:
+    from breakroom.tick import tick_world
+    from breakroom.worldstate import load_world
+
+    world = tmp_path / "tower"
+    assert main(["init", "--world", str(world), "--seed", "42"]) == 0
+
+    state_path = world / "state" / "tower.json"
+    older_state = json.loads(state_path.read_text())
+    older_state.pop("storylet_history", None)
+    state_path.write_text(json.dumps(older_state), encoding="utf-8")
+    assert "storylet_history" not in load_world(world).state
+
+    # A pre-upgrade event log is not a source for backfilling this optional map.
+    old_scene = {"type": "scene", "day": 0, "storylet_id": "shared-space-repair"}
+    (world / "events.jsonl").write_text(json.dumps(old_scene) + "\n", encoding="utf-8")
+
+    storylet_dir = world / "data" / "storylets"
+    for storylet_path in storylet_dir.glob("*.toml"):
+        storylet_path.unlink()
+    (storylet_dir / "shared-space-repair.toml").write_text(
+        '''
+id = "shared-space-repair"
+title = "Shared Space Repair"
+premise = "A small mess tests shared responsibility."
+kind = "incident_response"
+
+[eligibility]
+incident_ids = ["coffee-spill"]
+min_tick_gap = 3
+
+[[participants]]
+slot = "cleanup_owner"
+source = "incident.cleanup_owner"
+required = true
+
+[[decision_points]]
+id = "shared-space-repair-response"
+decision_type = "incident_response"
+character_slot = "cleanup_owner"
+''',
+        encoding="utf-8",
+    )
+
+    expected_history = {"shared-space-repair": 1}
+    for day in range(1, 5):
+        # Each production tick reloads the persisted tower state.
+        assert load_world(world).state["day"] == day - 1
+        tick_world(world)
+        state = json.loads(state_path.read_text())
+        if day < 4:
+            assert state["storylet_history"] == expected_history
+        else:
+            assert state["storylet_history"] == {"shared-space-repair": 4}
+
+    assert [
+        event["day"] for event in events_of(world, "scene") if event["day"] > 0
+    ] == [1, 4]
 
 
 def test_morale_reflects_the_sum_of_every_fired_incidents_delta(

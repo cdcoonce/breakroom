@@ -1,0 +1,36 @@
+{
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_worldstate.py",
+    "-k", "incident_payload or valid_incident_morale_delta_behavior"
+  ],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_worldstate.py"],
+  "mutants": [
+    {
+      "label": "missing-or-nonmapping-incident-guard-removed",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "if not isinstance(incident, dict):\n            raise ValidationError(\"incident event: incident must be an object\")",
+      "replace": "if False:\n            raise ValidationError(\"incident event: incident must be an object\")",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "Direct and replay tests must reject missing or non-object incident payloads through ValidationError."
+    },
+    {
+      "label": "morale-delta-type-guard-removed",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "if not isinstance(morale_delta, (int, float)) or isinstance(morale_delta, bool):",
+      "replace": "if False:",
+      "oracle": "real",
+      "expect": "killed",
+      "why": "A string or boolean delta must be rejected before arithmetic."
+    },
+    {
+      "label": "equivalent-validation-predicate-order",
+      "file": "../src/breakroom/worldstate.py",
+      "find": "if not isinstance(morale_delta, (int, float)) or isinstance(morale_delta, bool):",
+      "replace": "if isinstance(morale_delta, bool) or not isinstance(morale_delta, (int, float)):",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Positive control: equivalent predicate with reversed disjunct order."
+    }
+  ]
+}

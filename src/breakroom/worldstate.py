@@ -37,8 +37,14 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     next_state = copy.deepcopy(state)
     event_type = event["type"]
     if event_type == "incident":
+        incident = event.get("incident")
+        if not isinstance(incident, dict):
+            raise ValidationError("incident event: incident must be an object")
+        morale_delta = incident.get("morale_delta", 0)
+        if not isinstance(morale_delta, (int, float)) or isinstance(morale_delta, bool):
+            raise ValidationError("incident event: morale_delta must be numeric")
         next_state["day"] = max(next_state["day"], event["day"])
-        next_state["morale"] += event["incident"].get("morale_delta", 0)
+        next_state["morale"] += morale_delta
     elif event_type == "scene":
         next_state["day"] = max(next_state["day"], event["day"])
         _apply_scene_spotlight(next_state, event)
@@ -126,6 +132,8 @@ def _apply_scene_spotlight(state: dict[str, Any], event: dict[str, Any]) -> None
     spotlight_history = state.setdefault("spotlight_history", {})
     for character_id in character_ids:
         spotlight_history[character_id] = event["day"]
+    storylet_history = state.setdefault("storylet_history", {})
+    storylet_history[event["storylet_id"]] = event["day"]
 
 
 def _apply_edge_delta(state: dict[str, Any], event: dict[str, Any]) -> None:
