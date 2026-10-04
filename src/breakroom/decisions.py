@@ -732,7 +732,7 @@ def _validate_response(response: Any, options: list[dict[str, Any]]) -> str | No
 
     valid_ids = {option["id"] for option in options}
     choice_id = response.get("choice_id")
-    if choice_id not in valid_ids:
+    if not isinstance(choice_id, str) or choice_id not in valid_ids:
         return f"choice_id must be one of {sorted(valid_ids)}"
 
     rationale = response.get("rationale")

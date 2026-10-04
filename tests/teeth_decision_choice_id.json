@@ -1,0 +1,40 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv", "run", "pytest", "-q", "tests/test_decisions.py", "-k",
+    "unhashable_list_choice_id_retries_and_recovers or unhashable_object_choice_id_retries_and_recovers or two_unhashable_list_choice_ids_fall_back or two_unhashable_object_choice_ids_fall_back or missing_choice_id_retries_with_existing_validation_error"
+  ],
+  "collect_command": [
+    "uv", "run", "pytest", "--collect-only", "-q", "tests/test_decisions.py", "-k",
+    "unhashable_list_choice_id_retries_and_recovers or unhashable_object_choice_id_retries_and_recovers or two_unhashable_list_choice_ids_fall_back or two_unhashable_object_choice_ids_fall_back or missing_choice_id_retries_with_existing_validation_error"
+  ],
+  "mutants": [
+    {
+      "label": "remove the non-string choice ID guard",
+      "file": "../src/breakroom/decisions.py",
+      "find": "if not isinstance(choice_id, str) or choice_id not in valid_ids:",
+      "replace": "if choice_id not in valid_ids:",
+      "oracle": "double",
+      "expect": "killed",
+      "why": "List and object IDs must return validation errors so the public retry and fallback paths complete; the tests supply these responses through a recording model client."
+    },
+    {
+      "label": "raise KeyError when choice_id is missing",
+      "file": "../src/breakroom/decisions.py",
+      "find": "choice_id = response.get(\"choice_id\")",
+      "replace": "choice_id = response[\"choice_id\"]",
+      "oracle": "double",
+      "expect": "killed",
+      "why": "A missing choice_id must remain a regular validation error that enters the existing retry path."
+    },
+    {
+      "label": "add a local set type annotation",
+      "file": "../src/breakroom/decisions.py",
+      "find": "    valid_ids = {option[\"id\"] for option in options}",
+      "replace": "    valid_ids: set[str] = {option[\"id\"] for option in options}",
+      "oracle": "double",
+      "expect": "survived",
+      "why": "A local variable annotation does not change set construction or runtime validation behavior."
+    }
+  ]
+}
