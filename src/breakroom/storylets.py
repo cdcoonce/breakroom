@@ -853,9 +853,15 @@ def _intervention_weight(
             continue
         targets = action.get("character_ids", [])
         if (
-            action.get("incident_id") in incident_ids
-            or action.get("room_id") in room_ids
-            or action.get("secret_id") in secret_ids
+            (
+                action.get("incident_id") is not None
+                and action.get("incident_id") in incident_ids
+            )
+            or (action.get("room_id") is not None and action.get("room_id") in room_ids)
+            or (
+                action.get("secret_id") is not None
+                and action.get("secret_id") in secret_ids
+            )
             or (isinstance(targets, list) and set(targets) & pool_set)
         ):
             return 2.0

@@ -1,0 +1,44 @@
+{
+  "runner": "pytest",
+  "test_command": ["python", "-m", "pytest", "-q", "tests/test_norms.py"],
+  "collect_command": ["python", "-m", "pytest", "--collect-only", "-q", "tests/test_norms.py"],
+  "mutants": [
+    {
+      "label": "allow boolean incurred amounts through the numeric guard",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "        isinstance(incurred, bool)\n        or not isinstance(incurred, (int, float))",
+      "replace": "        not isinstance(incurred, (int, float))"
+    },
+    {
+      "label": "allow boolean reported amounts through the numeric guard",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "        or isinstance(reported, bool)\n        or not isinstance(reported, (int, float))",
+      "replace": "        or not isinstance(reported, (int, float))"
+    },
+    {
+      "label": "reject zero numeric expense amounts as if they were booleans",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "        or not isinstance(reported, (int, float))\n    ):\n        return None\n    if reported <= incurred:",
+      "replace": "        or not isinstance(reported, (int, float))\n        or incurred == 0\n        or reported == 0\n    ):\n        return None\n    if reported <= incurred:"
+    },
+    {
+      "label": "flag equal numeric amounts as overstated",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "    if reported <= incurred:\n        return None",
+      "replace": "    if reported < incurred:\n        return None"
+    },
+    {
+      "label": "[control] reverse builtin numeric type membership order",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "For builtin int and float classes, isinstance membership is unchanged by reversing the class tuple; both bool exclusions and the amount comparison remain intact. This is equivalent for every expense amount, not an assumption about fixture values. The argument would not extend to arbitrary classes with side-effecting metaclass instance checks.",
+      "find": "        or not isinstance(incurred, (int, float))\n        or isinstance(reported, bool)\n        or not isinstance(reported, (int, float))",
+      "replace": "        or not isinstance(incurred, (float, int))\n        or isinstance(reported, bool)\n        or not isinstance(reported, (float, int))"
+    }
+  ]
+}
