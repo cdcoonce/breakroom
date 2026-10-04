@@ -98,6 +98,81 @@ def test_seal_secret_rejects_duplicate_id(tmp_path: Path) -> None:
         _seal(world)
 
 
+def test_healthy_secret_operations_preserve_unrelated_malformed_records(
+    tmp_path: Path,
+) -> None:
+    world = _new_world(tmp_path)
+    healthy = _seal(world, exposure_risk=1.0)
+    public_before = read_secret(world, "affair-1")
+    malformed = {"id": "broken", "unexpected": ["leave", "alone"]}
+    store_path = _store_path(world)
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+    store["broken"] = malformed
+    store_path.write_text(json.dumps(store), encoding="utf-8")
+
+    assert read_secret(world, "affair-1") == public_before
+
+    advanced = advance_exposure(world, healthy, seed=42, tick=1, deltas=[0.1])
+    revealed = maybe_reveal(
+        world,
+        advanced,
+        day=1,
+        rng=RngStream(seed=42, stream="exposure", tick=2),
+    )
+    assert revealed.state == "observable"
+
+    seal_secret(
+        world,
+        id="new-secret",
+        holder="alex-chen",
+        content="A separate fact.",
+        is_true=False,
+    )
+
+    assert json.loads(store_path.read_text(encoding="utf-8"))["broken"] == malformed
+
+
+def test_seal_secret_validates_malformed_duplicate_record_before_rejecting_duplicate(
+    tmp_path: Path,
+) -> None:
+    world = _new_world(tmp_path)
+    store_path = _store_path(world)
+    store_path.parent.mkdir(parents=True)
+    malformed = {"id": "affair-1", "holder": "jordan-vale"}
+    store_path.write_text(json.dumps({"affair-1": malformed}), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="missing content"):
+        _seal(world)
+
+    assert json.loads(store_path.read_text(encoding="utf-8"))["affair-1"] == malformed
+
+
+@pytest.mark.parametrize("operation", ["advance", "reveal"])
+def test_secret_operations_reject_malformed_accessed_record(
+    tmp_path: Path, operation: str
+) -> None:
+    world = _new_world(tmp_path)
+    secret = _seal(world, exposure_risk=1.0)
+    store_path = _store_path(world)
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+    del store["affair-1"]["content"]
+    store_path.write_text(json.dumps(store), encoding="utf-8")
+    original_bytes = store_path.read_bytes()
+
+    with pytest.raises(ValidationError, match="missing content"):
+        if operation == "advance":
+            advance_exposure(world, secret, seed=1, tick=1, deltas=[0.2])
+        else:
+            maybe_reveal(
+                world,
+                secret,
+                day=1,
+                rng=RngStream(seed=1, stream="exposure", tick=1),
+            )
+
+    assert store_path.read_bytes() == original_bytes
+
+
 def test_malformed_store_raises_validation_error(tmp_path: Path) -> None:
     world = _new_world(tmp_path)
     store = _store_path(world)
@@ -105,6 +180,16 @@ def test_malformed_store_raises_validation_error(tmp_path: Path) -> None:
     store.write_text("not json", encoding="utf-8")
 
     with pytest.raises(ValidationError, match="invalid JSON"):
+        read_secret(world, "affair-1")
+
+
+def test_non_object_store_raises_validation_error(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    store = _store_path(world)
+    store.parent.mkdir(parents=True)
+    store.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="store must be a JSON object"):
         read_secret(world, "affair-1")
 
 
@@ -118,6 +203,16 @@ def test_store_record_missing_field_raises_validation_error(tmp_path: Path) -> N
     )
 
     with pytest.raises(ValidationError, match="missing content"):
+        read_secret(world, "affair-1")
+
+
+def test_read_secret_rejects_a_null_record_as_malformed(tmp_path: Path) -> None:
+    world = _new_world(tmp_path)
+    store = _store_path(world)
+    store.parent.mkdir(parents=True)
+    store.write_text(json.dumps({"affair-1": None}), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="record for affair-1 must be an object"):
         read_secret(world, "affair-1")
 
 
@@ -257,6 +352,20 @@ def test_maybe_reveal_takes_no_draw_below_threshold(tmp_path: Path) -> None:
     assert result.state == "sealed"
     assert log.records == []
     assert _read_events(world) == []
+
+
+def test_maybe_reveal_returns_early_without_loading_store(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    world = _new_world(tmp_path)
+    secret = replace(_seal(world, exposure_risk=1.0), state="observable")
+    _store_path(world).write_text("not json", encoding="utf-8")
+
+    result = maybe_reveal(
+        world, secret, day=1, rng=RngStream(seed=1, stream="exposure", tick=1)
+    )
+
+    assert result == secret
 
 
 def test_maybe_reveal_transitions_and_emits_secret_reveal_event(tmp_path: Path) -> None:
