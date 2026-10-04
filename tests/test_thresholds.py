@@ -233,6 +233,28 @@ def test_loader_rejects_empty_or_non_directory_threshold_path(tmp_path: Path) ->
         api.load_thresholds(non_directory_world)
 
 
+def test_loader_rejects_dangling_threshold_symlink_but_accepts_directory_symlink(
+    tmp_path: Path,
+) -> None:
+    api = thresholds_api()
+    dangling_world = tmp_path / "dangling-world"
+    (dangling_world / "data").mkdir(parents=True)
+    dangling_link = dangling_world / "data" / "thresholds"
+    dangling_link.symlink_to(tmp_path / "missing-threshold-directory", target_is_directory=True)
+
+    with pytest.raises(ValidationError, match="thresholds"):
+        api.load_thresholds(dangling_world)
+
+    target = tmp_path / "shared-thresholds"
+    _write_threshold(target, "custom_alert", dial="morale", trip=5, rearm=9)
+    linked_world = tmp_path / "linked-world"
+    (linked_world / "data").mkdir(parents=True)
+    (linked_world / "data" / "thresholds").symlink_to(target, target_is_directory=True)
+    assert dict(api.load_thresholds(linked_world)) == {
+        "custom_alert": api.ThresholdDefinition(dial="morale", trip=5, rearm=9)
+    }
+
+
 @pytest.mark.parametrize(
     "definition",
     [
