@@ -2082,3 +2082,125 @@ def test_all_three_decide_entry_points_send_the_same_shared_payload_shape(world:
         assert payload["response_schema"] == expected_response_schema
         assert payload["context_ref"]["state_path"] == "state/tower.json"
         assert payload["context_ref"]["event_sequence"] == 0
+
+
+def test_unhashable_list_choice_id_retries_and_recovers() -> None:
+    client = RecordingModelClient(
+        [
+            {"choice_id": ["clean_up"], "rationale": "Malformed ID."},
+            {"choice_id": "ignore", "rationale": "I will leave it."},
+        ]
+    )
+    result = decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=client,
+        existing_decision_count=2,
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["validation_error"] == "choice_id must be one of ['clean_up', 'ignore']"
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert client.calls[1]["decision_id"] == client.calls[0]["decision_id"] == "dec-000003"
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == "ignore"
+    assert result.attribution["decision_id"] == "dec-000003"
+    assert result.attribution["context_ref"] == client.calls[0]["context_ref"]
+
+
+def test_unhashable_object_choice_id_retries_and_recovers() -> None:
+    client = RecordingModelClient(
+        [
+            {"choice_id": {"id": "clean_up"}, "rationale": "Malformed ID."},
+            {"choice_id": "ignore", "rationale": "I will leave it."},
+        ]
+    )
+    result = decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=client,
+        existing_decision_count=2,
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["validation_error"] == "choice_id must be one of ['clean_up', 'ignore']"
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert client.calls[1]["decision_id"] == client.calls[0]["decision_id"] == "dec-000003"
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == "ignore"
+    assert result.attribution["decision_id"] == "dec-000003"
+    assert result.attribution["context_ref"] == client.calls[0]["context_ref"]
+
+
+def test_two_unhashable_list_choice_ids_fall_back() -> None:
+    malformed = {"choice_id": ["clean_up"], "rationale": "Malformed ID."}
+    client = RecordingModelClient([malformed, malformed])
+    result = decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=client,
+        existing_decision_count=2,
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["validation_error"] == "choice_id must be one of ['clean_up', 'ignore']"
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert result.attribution["validation_status"] == "fallback"
+    assert result.attribution["fallback_reason"]
+    assert result.attribution["choice_id"] == "clean_up"
+    assert result.attribution["decision_id"] == "dec-000003"
+    assert result.attribution["context_ref"] == client.calls[0]["context_ref"]
+
+
+def test_two_unhashable_object_choice_ids_fall_back() -> None:
+    malformed = {"choice_id": {"id": "clean_up"}, "rationale": "Malformed ID."}
+    client = RecordingModelClient([malformed, malformed])
+    result = decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=client,
+        existing_decision_count=2,
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["validation_error"] == "choice_id must be one of ['clean_up', 'ignore']"
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert result.attribution["validation_status"] == "fallback"
+    assert result.attribution["fallback_reason"]
+    assert result.attribution["choice_id"] == "clean_up"
+    assert result.attribution["decision_id"] == "dec-000003"
+    assert result.attribution["context_ref"] == client.calls[0]["context_ref"]
+
+
+def test_missing_choice_id_retries_with_existing_validation_error() -> None:
+    client = RecordingModelClient(
+        [
+            {"rationale": "Missing ID."},
+            {"choice_id": "ignore", "rationale": "I will leave it."},
+        ]
+    )
+    result = decisions.decide_incident_response(
+        state=make_state(),
+        characters={CHARACTER_ID: CHARACTER},
+        incident_record=make_incident_record(),
+        registry=make_registry(CLEANUP_NORM),
+        model_client=client,
+        existing_decision_count=2,
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["validation_error"] == "choice_id must be one of ['clean_up', 'ignore']"
+    assert client.calls[1]["context_ref"] == client.calls[0]["context_ref"]
+    assert client.calls[1]["decision_id"] == client.calls[0]["decision_id"] == "dec-000003"
+    assert result.attribution["validation_status"] == "retry_valid"
+    assert result.attribution["choice_id"] == "ignore"
+    assert result.attribution["decision_id"] == "dec-000003"
+    assert result.attribution["context_ref"] == client.calls[0]["context_ref"]
