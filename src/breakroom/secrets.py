@@ -189,20 +189,9 @@ def maybe_reveal(
         "holder": secret.holder,
         "is_true": secret.is_true,
         "content": secret.content,
+        "norm_tags": [],
+        "norm_violations": [],
     }
-    tagging = _tag_with_norms(
-        world,
-        {
-            "type": "secret_reveal",
-            "day": day,
-            "secret_id": secret.id,
-            "knowers": knowers,
-            "provenance": provenance,
-        },
-    )
-    if tagging is not None:
-        provenance["norm_tags"] = tagging["norm_tags"]
-        provenance["norm_violations"] = tagging["norm_violations"]
 
     event = append_event(
         world,
@@ -237,16 +226,6 @@ def read_secret(world: Path, secret_id: str) -> dict[str, Any]:
         raise ValidationError(f"unknown secret: {secret_id}")
     record = store[secret_id]
     return _secret_from_record(_store_path(world), secret_id, record).public_view()
-
-
-def _tag_with_norms(world: Path, record: dict[str, Any]) -> dict[str, Any] | None:
-    try:
-        from breakroom import norms
-    except ImportError:
-        return None
-    if not (world / "data" / "norms.toml").exists():
-        return None
-    return norms.tag_record(norms.load_registry(world), record)
 
 
 def _store_path(world: Path) -> Path:

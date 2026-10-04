@@ -207,8 +207,7 @@ def _append_incident_events(world: Path, incident_events: list[dict[str, Any]]) 
 def _load_registry(world: Path) -> norms.Registry | None:
     """The registry is optional: a world initialized before norms existed still ticks.
 
-    Mirrors the graceful skip in `secrets._tag_with_norms`. Scaffolding the file is
-    `init_world`'s job, never the tick loop's.
+    Scaffolding the file is `init_world`'s job, never the tick loop's.
     """
     if not (world / "data" / "norms.toml").exists():
         return None
