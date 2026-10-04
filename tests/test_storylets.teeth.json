@@ -1,0 +1,40 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_storylets.py",
+    "-k",
+    "non_numeric_ordered_quality_values or accepts_numeric_ordered_quality_values or keeps_eq_quality_values_unrestricted or preserves_shorthand_and_value_free_present_quality_tests"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_storylets.py",
+    "-k",
+    "non_numeric_ordered_quality_values or accepts_numeric_ordered_quality_values or keeps_eq_quality_values_unrestricted or preserves_shorthand_and_value_free_present_quality_tests"
+  ],
+  "mutants": [
+    {
+      "label": "omit ordered numeric value guard",
+      "file": "../src/breakroom/storylets.py",
+      "find": "    if operator in (\"gte\", \"lte\") and not _is_number(value):\n        raise ValidationError(\n            f\"{source}: {field_name} operator {operator!r} value must be numeric for {storylet_id}\"\n        )\n",
+      "replace": "    if False:\n        raise ValidationError(\n            f\"{source}: {field_name} operator {operator!r} value must be numeric for {storylet_id}\"\n        )\n",
+      "oracle": "real"
+    },
+    {
+      "label": "[control] use set membership for ordered operators",
+      "file": "../src/breakroom/storylets.py",
+      "find": "operator in (\"gte\", \"lte\")",
+      "replace": "operator in {\"gte\", \"lte\"}",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "After the existing VALID_OPERATORS check, values reaching this guard are one of the supported string operators. The tuple and set contain the same two literals, so both choose the same guard and error behavior for every loader input on this path. This argument does not apply to other membership uses or change acceptance of unsupported operators."
+    }
+  ]
+}
