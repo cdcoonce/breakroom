@@ -232,7 +232,8 @@ def test_write_snapshot_rejects_path_names_before_creating_files(
         write_snapshot(world, {"day": 0}, name)
 
     assert not (world / "snapshots").exists()
-    assert not (tmp_path / "evil.json").exists()
+    assert not (world / "evil.json").exists()
+    assert not (tmp_path / "absolute.json").exists()
 
 
 def test_write_snapshot_preserves_other_double_dot_names(tmp_path: Path) -> None:
