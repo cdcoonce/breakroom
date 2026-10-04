@@ -1,0 +1,23 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_tick_incidents.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_tick_incidents.py"],
+  "mutants": [
+    {
+      "label": "restore no-incident text when an incident fired without a storylet",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "episode_prose = FIRED_INCIDENTS_PROSE if incidents_fired else QUIET_DAY_PROSE",
+      "replace": "episode_prose = QUIET_DAY_PROSE"
+    },
+    {
+      "label": "[control] reorder independent keyword arguments",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The keyword arguments are bound by name, and both values are already computed local values or a side-effect-free bool conversion. Swapping their source order leaves the call and chronicle output identical for every test path; this argument holds for this call site only.",
+      "find": "        world, day=day, brief=brief, prose=prose, incidents_fired=bool(fired_ids)",
+      "replace": "        world, day=day, brief=brief, incidents_fired=bool(fired_ids), prose=prose"
+    }
+  ]
+}
