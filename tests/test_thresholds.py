@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import json
 import math
+import os
+import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from zipfile import ZipFile
 
 import pytest
 
@@ -278,3 +283,66 @@ def test_check_thresholds_rejects_invalid_state_active_or_missing_dial(
 
     with pytest.raises(ValidationError):
         api.check_thresholds(state, active, thresholds=registry)
+
+
+def test_installed_wheel_loads_bundled_thresholds_outside_checkout(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheels = list(wheel_dir.glob("breakroom-*.whl"))
+    assert len(wheels) == 1
+    wheel = wheels[0]
+    with ZipFile(wheel) as archive:
+        names = set(archive.namelist())
+    assert "breakroom/data/thresholds/morale_crisis.toml" in names
+    assert "breakroom/data/thresholds/budget_crisis.toml" in names
+
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--target",
+            str(installed),
+            "--no-deps",
+            str(wheel),
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    outside = tmp_path / "outside-checkout"
+    outside.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(installed)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "import json; from breakroom.economy import load_thresholds; "
+            "r=load_thresholds(__import__('pathlib').Path('/no/world')); "
+            "print(json.dumps({k:[v.dial,v.trip,v.rearm] for k,v in r.items()}, sort_keys=True))",
+        ],
+        cwd=outside,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == {
+        "budget_crisis": ["budget", 250, 300],
+        "morale_crisis": ["morale", 20, 30],
+    }

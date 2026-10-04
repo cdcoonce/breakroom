@@ -156,8 +156,7 @@ Inputs:
   `+2.0` for an unresolved incident from the prior two ticks, otherwise `0`.
 - `hot_edge_weight`: `min(3.0, 0.5 * sum(abs(edge_delta_last_7_ticks)))` across participant edges.
 - `exposure_weight`: `+3.0 * max_secret_exposure_risk`, where risk is `0.0` to `1.0`.
-- `pressure_weight`: `+2.0` if morale is low, `+2.0` if a contract deadline is within two ticks,
-  `+1.0` if budget is below the configured warning line.
+- `pressure_weight`: `+2.0` if morale is low, `+2.0` if a contract deadline is within two ticks, and `+1.0` if budget is below `state.budget_warning_line` (default 250); the standalone `budget_crisis` threshold (trip 250, rearm 300) is configured separately and its emitted events do not drive storylet pressure.
 - `intervention_weight`: `+2.0` if a recent director action targets this storylet's incident,
   participants, room, or secret.
 - `time_since_spotlight_weight`: `min(2.5, ticks_since_any_participant_spotlight * 0.25)`.
