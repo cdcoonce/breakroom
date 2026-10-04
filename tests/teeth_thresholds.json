@@ -1,0 +1,135 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "-q", "tests/test_thresholds.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_thresholds.py"],
+  "mutants": [
+    {
+      "label": "[must-kill] reverse the inclusive low-is-bad trip comparison",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "elif threshold_id not in active and value <= definition.trip:",
+      "replace": "elif threshold_id not in active and value >= definition.trip:"
+    },
+    {
+      "label": "[must-kill] make trip boundary strict",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "elif threshold_id not in active and value <= definition.trip:",
+      "replace": "elif threshold_id not in active and value < definition.trip:"
+    },
+    {
+      "label": "[must-kill] make re-arm boundary strict",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if threshold_id in active and value >= definition.rearm:",
+      "replace": "if threshold_id in active and value > definition.rearm:"
+    },
+    {
+      "label": "[must-kill] ignore prior active status during re-arm",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if threshold_id in active and value >= definition.rearm:",
+      "replace": "if False and threshold_id in active and value >= definition.rearm:"
+    },
+    {
+      "label": "[must-kill] return the old active set after a transition",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    return events, frozenset(updated)\n",
+      "replace": "    return events, active\n"
+    },
+    {
+      "label": "[must-kill] mutate caller-owned state while checking thresholds",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    definitions = _validated_threshold_registry(registry)\n",
+      "replace": "    definitions = _validated_threshold_registry(registry)\n    state['morale'] = state['morale'] + 1\n"
+    },
+    {
+      "label": "[must-kill] mutate a caller-injected mutable registry",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    definitions = _validated_threshold_registry(registry)\n",
+      "replace": "    registry['unexpected'] = ThresholdDefinition(dial='morale', trip=5, rearm=9)\n    definitions = _validated_threshold_registry(registry)\n"
+    },
+    {
+      "label": "[must-kill] make returned registry writable",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    return ThresholdRegistry(definitions)\n\n\ndef _load_bundled_thresholds",
+      "replace": "    return definitions\n\n\ndef _load_bundled_thresholds"
+    },
+    {
+      "label": "[must-kill] map threshold definitions to Budget regardless of configured dial",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    dial = value[\"dial\"]\n",
+      "replace": "    dial = \"budget\"\n"
+    },
+    {
+      "label": "[must-kill] accept a threshold with trip at or above re-arm",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    if trip >= rearm:\n        raise ValidationError(f\"{context}: trip must be less than rearm\")",
+      "replace": "    if False:\n        raise ValidationError(f\"{context}: trip must be less than rearm\")"
+    },
+    {
+      "label": "[must-kill] accept boolean threshold boundaries",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    trip = _finite_number(value[\"trip\"], f\"{context}: trip\")",
+      "replace": "    trip = value[\"trip\"]"
+    },
+    {
+      "label": "[must-kill] accept nonfinite threshold and dial values",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    if isinstance(value, float) and not math.isfinite(value):\n        raise ValidationError(f\"{context} must be a finite int or float\")",
+      "replace": "    if False:\n        raise ValidationError(f\"{context} must be a finite int or float\")"
+    },
+    {
+      "label": "[must-kill] accept unknown prior active condition names",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    if unknown_active:\n        raise ValidationError(f\"active thresholds are not in registry: {sorted(unknown_active)!r}\")",
+      "replace": "    if False:\n        raise ValidationError(f\"active thresholds are not in registry: {sorted(unknown_active)!r}\")"
+    },
+    {
+      "label": "[must-kill] treat a present empty world registry as bundled fallback",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    if not children:\n        raise ValidationError(f\"{directory}: threshold registry cannot be empty\")",
+      "replace": "    if False:\n        raise ValidationError(f\"{directory}: threshold registry cannot be empty\")"
+    },
+    {
+      "label": "[must-kill] treat a dangling threshold-directory symlink as absent",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "if not directory.exists() and not directory.is_symlink():",
+      "replace": "if not directory.exists():"
+    },
+    {
+      "label": "[must-kill] resolve default thresholds through the current working directory",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "registry = _load_bundled_thresholds() if thresholds is None else thresholds",
+      "replace": "registry = load_thresholds(Path.cwd()) if thresholds is None else thresholds"
+    },
+    {
+      "label": "[must-kill] omit threshold TOML files from built wheels",
+      "file": "../pyproject.toml",
+      "oracle": "real",
+      "find": "packages = [\"src/breakroom\"]",
+      "replace": "packages = [\"src/breakroom\"]\nexclude = [\"**/data/thresholds/*.toml\"]"
+    },
+    {
+      "label": "[control] preserve semantics after comment and key-order-only TOML rewrite",
+      "file": "../src/breakroom/data/thresholds/morale_crisis.toml",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "TOML comments, whitespace around assignments, and key order are syntactic presentation only; parsing yields the same three-field threshold definition, so the registry, event transitions, and installed-wheel defaults remain unchanged.",
+      "find": "dial = \"morale\"\ntrip = 20\nrearm = 30\n",
+      "replace": "# Equivalent formatting; semantics are unchanged.\nrearm   =  30\ndial  =  \"morale\"\ntrip =    20\n"
+    }
+  ]
+}
