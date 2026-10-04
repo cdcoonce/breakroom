@@ -1,4 +1,5 @@
 import json
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -33,6 +34,21 @@ def test_render_scene_strips_command_output(monkeypatch):
     result = render_scene(brief)
 
     assert result == "scripted narration"
+
+
+@pytest.mark.parametrize("stdout", ["", " \t\n"])
+def test_render_scene_rejects_empty_command_output(monkeypatch, stdout):
+    monkeypatch.setenv("BREAKROOM_NARRATOR_COMMAND", "configured-narrator")
+    monkeypatch.setattr(
+        "breakroom.narrator.subprocess.run",
+        lambda *args, **kwargs: CompletedProcess(args[0], 0, stdout=stdout, stderr=""),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="narrator command returned empty output: configured-narrator",
+    ):
+        render_scene({"character": {"name": "Priya"}, "incident": None})
 
 
 def test_render_scene_surfaces_stderr_on_failure(monkeypatch):

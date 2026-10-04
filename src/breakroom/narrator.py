@@ -23,7 +23,10 @@ def render_scene(brief: dict[str, Any]) -> str:
                 f"narrator command failed (exit {error.returncode}): {command}\n"
                 f"stdout: {error.stdout}\nstderr: {error.stderr}"
             ) from error
-        return completed.stdout.strip()
+        output = completed.stdout.strip()
+        if not output:
+            raise RuntimeError(f"narrator command returned empty output: {command}")
+        return output
 
     character = brief["character"]["name"]
     if brief["incident"] is None:
