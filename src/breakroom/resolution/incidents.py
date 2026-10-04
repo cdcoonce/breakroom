@@ -96,23 +96,28 @@ def _validate_incident(relative: Path, entry: Any) -> IncidentDef:
     for field_name in REQUIRED_INCIDENT_FIELDS:
         if field_name not in entry:
             raise ValidationError(f"{relative}: incident missing {field_name}")
+    incident_id = entry["id"]
+    if not isinstance(incident_id, str) or not incident_id:
+        raise ValidationError(
+            f"{relative}: incident id must be a non-empty string, got {incident_id!r}"
+        )
     base_rate = entry["base_rate"]
     if not isinstance(base_rate, (int, float)) or not (0 <= base_rate <= 1):
         raise ValidationError(
-            f"{relative}: base_rate must be between 0 and 1 for {entry['id']}"
+            f"{relative}: base_rate must be between 0 and 1 for {incident_id}"
         )
     return IncidentDef(
-        id=entry["id"],
+        id=incident_id,
         base_rate=float(base_rate),
         preconditions=[
-            _validate_precondition(relative, entry["id"], precondition)
+            _validate_precondition(relative, incident_id, precondition)
             for precondition in entry.get("preconditions", [])
         ],
         rooms=list(entry.get("rooms", [])),
         characters=list(entry.get("characters", [])),
         effects=[dict(effect) for effect in entry.get("effects", [])],
         chain_triggers=[
-            _validate_chain_trigger(relative, entry["id"], chain_trigger)
+            _validate_chain_trigger(relative, incident_id, chain_trigger)
             for chain_trigger in entry.get("chain_triggers", [])
         ],
     )
@@ -148,6 +153,12 @@ def _validate_chain_trigger(relative: Path, incident_id: str, entry: Any) -> Cha
         )
     if "target" not in entry:
         raise ValidationError(f"{relative}: chain_trigger missing target for {incident_id}")
+    target = entry["target"]
+    if not isinstance(target, str) or not target:
+        raise ValidationError(
+            f"{relative}: chain_trigger target must be a non-empty string, "
+            f"got {target!r} for {incident_id}"
+        )
     mode = entry.get("mode", "direct")
     if mode not in VALID_CHAIN_MODES:
         raise ValidationError(
@@ -163,7 +174,7 @@ def _validate_chain_trigger(relative: Path, incident_id: str, entry: Any) -> Cha
             f"{relative}: chain_trigger amount must be numeric for {incident_id}"
         )
     return ChainTrigger(
-        target=entry["target"],
+        target=target,
         mode=mode,
         amount=float(amount) if amount is not None else None,
     )

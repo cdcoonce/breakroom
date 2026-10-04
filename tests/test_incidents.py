@@ -114,6 +114,58 @@ def test_load_incident_table_rejects_missing_required_field(tmp_path: Path) -> N
         load_incident_table(world)
 
 
+@pytest.mark.parametrize(
+    ("id_value", "display_value"),
+    [("1", "1"), ("true", "True"), ('""', "''")],
+)
+def test_load_incident_table_rejects_non_string_or_empty_id(
+    tmp_path: Path, id_value: str, display_value: str
+) -> None:
+    world = tmp_path / "tower"
+    write_table(world, f"[[incidents]]\nid = {id_value}\nbase_rate = 0.4\n")
+
+    with pytest.raises(ValidationError, match="incident id must be a non-empty string") as exc:
+        load_incident_table(world)
+
+    assert display_value in str(exc.value)
+
+
+def test_load_incident_table_rejects_bool_int_id_collision(tmp_path: Path) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        "[[incidents]]\nid = 1\nbase_rate = 0.4\n\n"
+        "[[incidents]]\nid = true\nbase_rate = 0.2\n",
+    )
+
+    with pytest.raises(ValidationError, match="incident id must be a non-empty string") as exc:
+        load_incident_table(world)
+
+    assert "got 1" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("target_value", "display_value"),
+    [("1", "1"), ("true", "True"), ("[]", "[]"), ('""', "''")],
+)
+def test_load_incident_table_rejects_non_string_or_empty_chain_target(
+    tmp_path: Path, target_value: str, display_value: str
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        "[[incidents]]\nid = \"coffee-spill\"\nbase_rate = 0.4\n"
+        f"chain_triggers = [{{ target = {target_value}, mode = \"direct\" }}]\n",
+    )
+
+    with pytest.raises(
+        ValidationError, match="chain_trigger target must be a non-empty string"
+    ) as exc:
+        load_incident_table(world)
+
+    assert display_value in str(exc.value)
+
+
 def test_load_incident_table_rejects_unknown_incident_field(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_table(
