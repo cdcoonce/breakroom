@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -56,6 +57,8 @@ class RngStream:
     def bernoulli(self, purpose: str, *, probability: float) -> bool:
         if probability < 0 or probability > 1:
             raise ValueError("probability must be between 0 and 1")
+        if not math.isfinite(probability):
+            raise ValueError("probability must be finite")
         result = self._rng.random() < probability
         self._record(purpose=purpose, primitive="bernoulli", result=result)
         return result
@@ -65,6 +68,8 @@ class RngStream:
             raise ValueError("choices must not be empty")
         if any(weight < 0 for _, weight in choices):
             raise ValueError("choice weights must be non-negative")
+        if any(not math.isfinite(weight) for _, weight in choices):
+            raise ValueError("choice weights must be finite")
         total = sum(weight for _, weight in choices)
         if total <= 0:
             raise ValueError("total choice weight must be positive")
