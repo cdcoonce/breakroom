@@ -1,0 +1,37 @@
+{
+  "runner": "pytest",
+  "test_command": ["uv", "run", "pytest", "tests/test_secrets.py"],
+  "collect_command": ["uv", "run", "pytest", "--collect-only", "-q", "tests/test_secrets.py"],
+  "mutants": [
+    {
+      "label": "use the sealed handle risk for the threshold",
+      "file": "../src/breakroom/secrets.py",
+      "oracle": "real",
+      "find": "if exposure_risk < REVEAL_THRESHOLD:",
+      "replace": "if secret.exposure_risk < REVEAL_THRESHOLD:"
+    },
+    {
+      "label": "use the sealed handle risk for the reveal draw",
+      "file": "../src/breakroom/secrets.py",
+      "oracle": "real",
+      "find": "if not rng.bernoulli(\"reveal\", probability=exposure_risk):",
+      "replace": "if not rng.bernoulli(\"reveal\", probability=secret.exposure_risk):"
+    },
+    {
+      "label": "omit the persisted observable state guard",
+      "file": "../src/breakroom/secrets.py",
+      "oracle": "real",
+      "find": "    if current[\"state\"] != \"sealed\":\n        return secret\n\n",
+      "replace": ""
+    },
+    {
+      "label": "[control] reorder independent provenance keys",
+      "file": "../src/breakroom/secrets.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "The two provenance entries are independent mapping keys; their insertion order is not asserted by this suite. Raw serialized key order remains observable outside this suite.",
+      "find": "        \"trigger\": \"exposure_threshold\",\n        \"exposure_risk\": exposure_risk,",
+      "replace": "        \"exposure_risk\": exposure_risk,\n        \"trigger\": \"exposure_threshold\","
+    }
+  ]
+}

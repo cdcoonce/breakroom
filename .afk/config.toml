@@ -20,6 +20,8 @@ agent_prompt = """Implement the linked GitHub issue using test-driven developmen
 (red-green-refactor). Keep changes minimal and scoped to the issue's acceptance criteria. \
 Preserve the core invariants: outcomes are computed by code, events are append-only, and \
 scene briefs are assembled from structured state rather than freeform transcript memory. \
+Numeric-field validators and predicates must explicitly reject bool; bare \
+isinstance(value, (int, float)) also accepts bool and is insufficient. \
 Never make live model calls in tests or CI."""
 
 # auto_promote is ON, but gated on a cold read rather than on hand-promotion.

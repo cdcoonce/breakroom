@@ -1,0 +1,36 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_norms.py"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "-q",
+    "tests/test_norms.py"
+  ],
+  "mutants": [
+    {
+      "label": "unknown claimed names hide omitted actual contributors",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "find": "if not omitted:",
+      "replace": "if not claimed_set < actual_set:"
+    },
+    {
+      "label": "[control] construct independent contributor sets in reverse order",
+      "file": "../src/breakroom/norms.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "actual and claimed sets are built independently from separate input lists, so swapping these assignments is inert on every path in this suite; it would not be inert if either assignment depended on the other local.",
+      "find": "actual_set = set(actual)\n    claimed_set = set(claimed)",
+      "replace": "claimed_set = set(claimed)\n    actual_set = set(actual)"
+    }
+  ]
+}
