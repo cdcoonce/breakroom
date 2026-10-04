@@ -403,6 +403,24 @@ def test_legacy_flag_rejects_rulebook_and_any_present_metadata(tmp_path: Path) -
             api.move_dial(state, event, legacy_unclamped=True)
 
 
+def test_legacy_dial_delta_rejects_missing_or_non_object_dials() -> None:
+    api = economy_api()
+    state = {"budget": 1, "morale": 50, "reputation": 50}
+    # Missing 'dials' key raises ValidationError, not KeyError
+    with pytest.raises(ValidationError, match="dials must be an object"):
+        api.move_dial(state, {"type": "dial_delta", "day": 1}, legacy_unclamped=True)
+    # Non-object 'dials' (list) raises ValidationError, not AttributeError
+    with pytest.raises(ValidationError, match="dials must be an object"):
+        api.move_dial(
+            state, {"type": "dial_delta", "day": 1, "dials": ["budget"]}, legacy_unclamped=True
+        )
+    # Non-object 'dials' (string) raises ValidationError, not AttributeError
+    with pytest.raises(ValidationError, match="dials must be an object"):
+        api.move_dial(
+            state, {"type": "dial_delta", "day": 1, "dials": "budget"}, legacy_unclamped=True
+        )
+
+
 def test_wheel_installs_economy_and_payroll_resources_readably(tmp_path: Path) -> None:
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
