@@ -202,14 +202,15 @@ def _public_claim_omits_contributors(
         return None
     actual_set = set(actual)
     claimed_set = set(claimed)
-    if not claimed_set < actual_set:
+    omitted = actual_set - claimed_set
+    if not omitted:
         return None
     if not set(audience) & STATUS_RELEVANT_AUDIENCE:
         return None
     return {
         "character_id": record.get("character_id"),
         "work_item_id": record.get("work_item_id"),
-        "omitted_contributors": sorted(actual_set - claimed_set),
+        "omitted_contributors": sorted(omitted),
         "audience": audience,
     }
 
