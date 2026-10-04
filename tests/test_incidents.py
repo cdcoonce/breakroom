@@ -201,6 +201,63 @@ def test_load_incident_table_rejects_invalid_operator(tmp_path: Path) -> None:
         load_incident_table(world)
 
 
+@pytest.mark.parametrize(
+    ("path_value", "display_value"),
+    [("123", "123"), ("[\"a\", \"b\"]", "['a', 'b']")],
+)
+def test_load_incident_table_rejects_non_string_precondition_path(
+    tmp_path: Path, path_value: str, display_value: str
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 0.4\n'
+        f"preconditions = [{{ path = {path_value}, operator = \"gte\", value = 0 }}]\n",
+    )
+
+    with pytest.raises(ValidationError, match="precondition path must be a string") as exc:
+        load_incident_table(world)
+
+    assert display_value in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("operator_value", "display_value"),
+    [("[]", "[]"), ("1", "1"), ("true", "True")],
+)
+def test_load_incident_table_rejects_non_string_precondition_operator(
+    tmp_path: Path, operator_value: str, display_value: str
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 0.4\n'
+        f"preconditions = [{{ path = \"morale\", operator = {operator_value}, value = 0 }}]\n",
+    )
+
+    with pytest.raises(
+        ValidationError, match="precondition operator must be a string"
+    ) as exc:
+        load_incident_table(world)
+
+    assert display_value in str(exc.value)
+
+
+def test_load_incident_table_preserves_empty_precondition_path_policy(
+    tmp_path: Path,
+) -> None:
+    world = tmp_path / "tower"
+    write_table(
+        world,
+        '[[incidents]]\nid = "coffee-spill"\nbase_rate = 0.4\n'
+        'preconditions = [{ path = "", operator = "eq", value = 0 }]\n',
+    )
+
+    table = load_incident_table(world)
+
+    assert table.incidents["coffee-spill"].preconditions[0].path == ""
+
+
 def test_load_incident_table_rejects_duplicate_ids(tmp_path: Path) -> None:
     world = tmp_path / "tower"
     write_table(
