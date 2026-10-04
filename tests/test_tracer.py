@@ -85,11 +85,12 @@ def test_tick_appends_events_updates_state_and_writes_chronicle(
         "incident",
         "scene",
     ]
-    assert events[0]["incident"]["id"] == "awkward-silence"
-    assert events[1]["incident"]["id"] == "coffee-spill"
-    assert events[2]["incident"]["id"] == "printer-jam"
-    assert events[3]["storylet_id"] == "shared-space-repair"
-    assert events[3]["character_ids"] == ["jordan-vale"]
+    assert events[0]["source"] == events[5]["source"] == "payroll"
+    assert events[1]["incident"]["id"] == "awkward-silence"
+    assert events[2]["incident"]["id"] == "coffee-spill"
+    assert events[3]["incident"]["id"] == "printer-jam"
+    assert events[4]["storylet_id"] == "shared-space-repair"
+    assert events[4]["character_ids"] == ["jordan-vale"]
     assert [event["source"] for event in events if event.get("source") == "payroll"] == [
         "payroll",
         "payroll",
@@ -104,10 +105,10 @@ def test_tick_appends_events_updates_state_and_writes_chronicle(
         "shared-space-repair": "Coffee Spill",
         "stuck-workflow": "Printer Jam",
     }
-    expected_incident_name = storylet_incident_names[events[3]["storylet_id"]]
+    expected_incident_name = storylet_incident_names[events[4]["storylet_id"]]
     first_chronicle = (world / "chronicles" / "day-0001.md").read_text()
     assert f"Jordan Vale faced {expected_incident_name}." in first_chronicle
-    assert events[3]["storylet_id"] in first_chronicle
+    assert events[4]["storylet_id"] in first_chronicle
     assert "brief:" in first_chronicle
 
 

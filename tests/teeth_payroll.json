@@ -1,0 +1,134 @@
+{
+  "runner": "pytest",
+  "test_command": [
+    "uv",
+    "run",
+    "pytest",
+    "-q",
+    "tests/test_economy.py::test_world_payroll_override_selects_the_per_character_rate",
+    "tests/test_economy.py::test_invalid_present_payroll_override_raises_contextual_validation_error",
+    "tests/test_economy.py::test_payroll_receipt_multiplies_rate_by_headcount_and_preserves_zero_boundary",
+    "tests/test_economy.py::test_init_copies_bundled_payroll_default_to_new_world",
+    "tests/test_economy.py::test_wheel_installs_economy_and_payroll_resources_readably",
+    "tests/test_economy.py::test_only_economy_mutator_contains_dynamic_dial_state_writes",
+    "tests/test_tick_incidents.py::test_failed_narration_leaves_incident_receipts_for_a_successful_retry",
+    "tests/test_tick_incidents.py::test_fired_incident_without_eligible_storylet_gets_factual_chronicle",
+    "tests/test_tick_incidents.py::test_payroll_is_applied_before_incident_and_storylet_evaluation_and_replays",
+    "tests/test_tick_incidents.py::test_payroll_override_charges_every_character_on_quiet_tick_and_can_go_negative",
+    "tests/test_tick_incidents.py::test_invalid_payroll_override_fails_before_tick_persistence",
+    "tests/test_tick_incidents.py::test_payroll_multiplication_overflow_fails_before_tick_persistence",
+    "tests/test_tick_incidents.py::test_additive_dial_effect_changes_deterministic_storylet_selection",
+    "tests/test_tick_incidents.py::test_chained_edge_effects_keep_order_day_provenance_and_replay",
+    "tests/test_tick_incidents.py::test_fired_incident_without_storylet_persists_effect_then_quiet_day_and_replays",
+    "tests/test_tick_incidents.py::test_narrator_retry_persists_supported_effect_exactly_once_and_replays",
+    "tests/test_tick_incidents.py::test_fractional_dial_movements_survive_tick_reload_and_replay",
+    "tests/test_worldstate.py::test_replaying_persisted_quiet_day_reproduces_tick_state",
+    "tests/test_tracer.py::test_tick_appends_events_updates_state_and_writes_chronicle"
+  ],
+  "collect_command": [
+    "uv",
+    "run",
+    "pytest",
+    "--collect-only",
+    "tests/test_economy.py::test_world_payroll_override_selects_the_per_character_rate",
+    "tests/test_economy.py::test_invalid_present_payroll_override_raises_contextual_validation_error",
+    "tests/test_economy.py::test_payroll_receipt_multiplies_rate_by_headcount_and_preserves_zero_boundary",
+    "tests/test_economy.py::test_init_copies_bundled_payroll_default_to_new_world",
+    "tests/test_economy.py::test_wheel_installs_economy_and_payroll_resources_readably",
+    "tests/test_economy.py::test_only_economy_mutator_contains_dynamic_dial_state_writes",
+    "tests/test_tick_incidents.py::test_failed_narration_leaves_incident_receipts_for_a_successful_retry",
+    "tests/test_tick_incidents.py::test_fired_incident_without_eligible_storylet_gets_factual_chronicle",
+    "tests/test_tick_incidents.py::test_payroll_is_applied_before_incident_and_storylet_evaluation_and_replays",
+    "tests/test_tick_incidents.py::test_payroll_override_charges_every_character_on_quiet_tick_and_can_go_negative",
+    "tests/test_tick_incidents.py::test_invalid_payroll_override_fails_before_tick_persistence",
+    "tests/test_tick_incidents.py::test_payroll_multiplication_overflow_fails_before_tick_persistence",
+    "tests/test_tick_incidents.py::test_additive_dial_effect_changes_deterministic_storylet_selection",
+    "tests/test_tick_incidents.py::test_chained_edge_effects_keep_order_day_provenance_and_replay",
+    "tests/test_tick_incidents.py::test_fired_incident_without_storylet_persists_effect_then_quiet_day_and_replays",
+    "tests/test_tick_incidents.py::test_narrator_retry_persists_supported_effect_exactly_once_and_replays",
+    "tests/test_tick_incidents.py::test_fractional_dial_movements_survive_tick_reload_and_replay",
+    "tests/test_worldstate.py::test_replaying_persisted_quiet_day_reproduces_tick_state",
+    "tests/test_tracer.py::test_tick_appends_events_updates_state_and_writes_chronicle"
+  ],
+  "mutants": [
+    {
+      "label": "skip the live payroll debit",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "    state = economy.move_dial(state, payroll, rulebook=rulebook)",
+      "replace": "    state = state"
+    },
+    {
+      "label": "hardcode the bundled rate and ignore world overrides",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    return rate",
+      "replace": "    return 1.0"
+    },
+    {
+      "label": "ignore the world payroll override",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "    override = world / \"data\" / \"payroll.toml\"\n    if override.exists():",
+      "replace": "    override = world / \"data\" / \"payroll.toml\"\n    if False:"
+    },
+    {
+      "label": "charge only one character regardless of headcount",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            economy.load_payroll_rate(world), len(state[\"characters\"]), day=day",
+      "replace": "            economy.load_payroll_rate(world), 1, day=day"
+    },
+    {
+      "label": "bypass the economy mutator with a direct Budget write",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "    state = economy.move_dial(state, payroll, rulebook=rulebook)",
+      "replace": "    state[\"budget\"] += payroll[\"dial_movement\"][\"dials\"][\"budget\"]"
+    },
+    {
+      "label": "drop payroll provenance from the receipt",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        \"source\": \"payroll\",",
+      "replace": "        \"source\": \"incident\","
+    },
+    {
+      "label": "append payroll after the fired incident receipts",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            append_event(world, payroll)\n            _append_incident_events(world, incident_events)\n            _append_state_effect_events(world, state_effect_events)\n            append_event(world, {\"type\": \"quiet_day\", \"day\": day, \"rolls\": roll_log.records})",
+      "replace": "            _append_incident_events(world, incident_events)\n            append_event(world, payroll)\n            _append_state_effect_events(world, state_effect_events)\n            append_event(world, {\"type\": \"quiet_day\", \"day\": day, \"rolls\": roll_log.records})"
+    },
+    {
+      "label": "omit payroll from the no-incident quiet-day branch",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "        append_event(world, payroll)\n        append_event(world, {\"type\": \"quiet_day\", \"day\": day, \"rolls\": roll_log.records})",
+      "replace": "        append_event(world, {\"type\": \"quiet_day\", \"day\": day, \"rolls\": roll_log.records})"
+    },
+    {
+      "label": "journal payroll before narration succeeds",
+      "file": "../src/breakroom/tick.py",
+      "oracle": "real",
+      "find": "            prose = render_scene(brief)\n            append_event(world, payroll)",
+      "replace": "            append_event(world, payroll)\n            prose = render_scene(brief)"
+    },
+    {
+      "label": "saturate an overflowing payroll debit instead of rejecting it",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "find": "        \"dials\": {\"budget\": -(rate * headcount)},",
+      "replace": "        \"dials\": {\"budget\": -min(rate * headcount, 1.0e308)},"
+    },
+    {
+      "label": "[control] reorder independent payroll receipt fields",
+      "file": "../src/breakroom/economy.py",
+      "oracle": "real",
+      "expect": "survived",
+      "why": "Payroll receipt field insertion order is not semantic: Python consumers read named keys and append_event serializes event keys with sort_keys=True. This control is inert across the target suite and persisted JSONL; it makes no claim about iteration over unrelated mapping types.",
+      "find": "    return {\n        \"type\": \"dial_delta\",\n        \"day\": day,\n        \"dials\": {\"budget\": -(rate * headcount)},\n        \"source\": \"payroll\",\n        \"headcount\": headcount,\n        \"per_character_rate\": rate,\n    }",
+      "replace": "    return {\n        \"source\": \"payroll\",\n        \"per_character_rate\": rate,\n        \"headcount\": headcount,\n        \"type\": \"dial_delta\",\n        \"dials\": {\"budget\": -(rate * headcount)},\n        \"day\": day,\n    }"
+    }
+  ]
+}

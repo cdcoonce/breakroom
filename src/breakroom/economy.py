@@ -15,6 +15,55 @@ from breakroom.worldstate import ValidationError
 
 _DIALS = {"budget", "morale", "reputation"}
 _MOVEMENT_KEY = "dial_movement"
+_PAYROLL_RATE_KEY = "per_character_rate"
+
+
+def load_payroll_rate(world: Path) -> int | float:
+    """Load a validated world payroll override or the bundled default."""
+    override = world / "data" / "payroll.toml"
+    if override.exists():
+        try:
+            text = override.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValidationError(f"{override}: cannot read payroll configuration: {exc}") from exc
+        context = str(override)
+    else:
+        try:
+            text = files("breakroom").joinpath("data/payroll.toml").read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValidationError(f"bundled payroll configuration: cannot read: {exc}") from exc
+        context = "bundled payroll configuration"
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValidationError(f"{context}: invalid TOML: {exc}") from exc
+    if not isinstance(config, dict) or set(config) != {_PAYROLL_RATE_KEY}:
+        raise ValidationError(f"{context}: expected only a per_character_rate value")
+    rate = _finite_number(config[_PAYROLL_RATE_KEY], f"{context}: per_character_rate")
+    if rate < 0:
+        raise ValidationError(f"{context}: per_character_rate must be nonnegative")
+    return rate
+
+
+def payroll_receipt(
+    per_character_rate: int | float, headcount: int, *, day: int
+) -> dict[str, Any]:
+    """Build the deterministic, provenance-bearing payroll movement receipt."""
+    rate = _finite_number(per_character_rate, "payroll per_character_rate")
+    if rate < 0:
+        raise ValidationError("payroll per_character_rate must be nonnegative")
+    if isinstance(headcount, bool) or not isinstance(headcount, int) or headcount < 0:
+        raise ValidationError("payroll headcount must be a nonnegative integer")
+    if isinstance(day, bool) or not isinstance(day, int) or day < 0:
+        raise ValidationError("payroll day must be a nonnegative integer")
+    return {
+        "type": "dial_delta",
+        "day": day,
+        "dials": {"budget": -(rate * headcount)},
+        "source": "payroll",
+        "headcount": headcount,
+        "per_character_rate": rate,
+    }
 
 
 def load_rulebook(world: Path) -> dict[str, Any]:

@@ -121,6 +121,7 @@ def test_tick_raises_a_descriptive_error_when_the_spotlight_room_is_missing(
     assert events[0] == unrelated_incident
     day_one_events = [event for event in events if event.get("day") == 1]
     assert [event["type"] for event in day_one_events] == [
+        "dial_delta",
         "incident",
         "incident",
         "incident",
@@ -1179,7 +1180,8 @@ tick = 1''',
     ]
     assert events[0]["source"] == "payroll"
     assert len(events_of(world, "incident")) == 1
-    assert len(events_of(world, "dial_delta")) == 1
+    assert len(events_of(world, "dial_delta")) == 2
+    assert events_of(world, "dial_delta")[0]["source"] == "payroll"
     assert saved_state["morale"] == initial_state["morale"] + 1
     assert worldstate.replay_events(initial_state, events_path) == saved_state
 
