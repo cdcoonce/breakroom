@@ -198,6 +198,29 @@ def test_dial_delta_with_unknown_dial_is_rejected() -> None:
         apply_event(state, event)
 
 
+@pytest.mark.parametrize("delta", ["5", None, [5], True, False])
+def test_dial_delta_rejects_non_numeric_delta_types(delta: object) -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": delta}}
+
+    with pytest.raises(ValidationError, match="budget.*int or float"):
+        apply_event(state, event)
+
+
+def test_dial_delta_applies_integer_delta() -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": 3}}
+
+    assert apply_event(state, event)["budget"] == 13
+
+
+def test_dial_delta_applies_float_delta() -> None:
+    state = {"day": 0, "budget": 10}
+    event = {"type": "dial_delta", "day": 1, "dials": {"budget": 1.5}}
+
+    assert apply_event(state, event)["budget"] == 11.5
+
+
 def test_edge_delta_without_event_id_is_rejected() -> None:
     state = {"day": 0}
     event = {
