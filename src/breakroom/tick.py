@@ -135,18 +135,20 @@ def tick_world(world: Path) -> None:
                 ) from None
             spotlight_character = loaded.characters[spotlight_character_id]
 
-            spotlight_incident_id = selection.storylet.eligibility.incident_ids[0]
-            spotlight_incident = incidents[spotlight_incident_id]
-
-            try:
-                room = next(
-                    room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
-                )
-            except StopIteration:
-                raise TickError(
-                    f"incident {spotlight_incident['id']!r} references room "
-                    f"{spotlight_incident['room']!r}, which is missing from tower state"
-                ) from None
+            spotlight_incident = None
+            room = None
+            incident_ids = selection.storylet.eligibility.incident_ids
+            if incident_ids:
+                spotlight_incident = incidents[incident_ids[0]]
+                try:
+                    room = next(
+                        room for room in state["rooms"] if room["id"] == spotlight_incident["room"]
+                    )
+                except StopIteration:
+                    raise TickError(
+                        f"incident {spotlight_incident['id']!r} references room "
+                        f"{spotlight_incident['room']!r}, which is missing from tower state"
+                    ) from None
             brief |= {
                 "character": spotlight_character,
                 "room": room,
