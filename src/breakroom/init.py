@@ -191,6 +191,10 @@ def init_world(world: Path, seed: int) -> None:
         files("breakroom").joinpath("data/economy.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (world / "data" / "payroll.toml").write_text(
+        files("breakroom").joinpath("data/payroll.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     for filename, body in STARTER_STORYLETS.items():
         (world / "data" / "storylets" / filename).write_text(body, encoding="utf-8")
     (world / "events.jsonl").write_text("", encoding="utf-8")

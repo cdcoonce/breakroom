@@ -48,6 +48,75 @@ def _v1(dials: dict, **overrides) -> dict:
     return result
 
 
+def test_bundled_payroll_rate_defaults_to_one_budget_unit(tmp_path: Path) -> None:
+    api = economy_api()
+    world = tmp_path / "world-without-payroll-override"
+    world.mkdir()
+
+    assert api.load_payroll_rate(world) == 1.0
+
+
+def test_world_payroll_override_selects_the_per_character_rate(tmp_path: Path) -> None:
+    api = economy_api()
+    world = tmp_path / "world"
+    payroll = world / "data" / "payroll.toml"
+    payroll.parent.mkdir(parents=True)
+    payroll.write_text("per_character_rate = 2.5\n", encoding="utf-8")
+
+    assert api.load_payroll_rate(world) == 2.5
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "per_character_rate = [\n",
+        "per_character_rate = true\n",
+        'per_character_rate = "1.0"\n',
+        "per_character_rate = -0.1\n",
+        "per_character_rate = nan\n",
+        "per_character_rate = 1.0\nextra = 2\n",
+        "",
+    ],
+)
+def test_invalid_present_payroll_override_raises_contextual_validation_error(
+    tmp_path: Path, contents: str
+) -> None:
+    api = economy_api()
+    world = tmp_path / "world"
+    payroll = world / "data" / "payroll.toml"
+    payroll.parent.mkdir(parents=True)
+    payroll.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="payroll.toml"):
+        api.load_payroll_rate(world)
+
+
+def test_payroll_receipt_multiplies_rate_by_headcount_and_preserves_zero_boundary() -> None:
+    api = economy_api()
+
+    assert api.payroll_receipt(1.25, 3, day=8) == {
+        "type": "dial_delta",
+        "day": 8,
+        "dials": {"budget": -3.75},
+        "source": "payroll",
+        "headcount": 3,
+        "per_character_rate": 1.25,
+    }
+    assert api.payroll_receipt(1.0, 0, day=8)["dials"] == {"budget": 0.0}
+
+
+def test_init_copies_bundled_payroll_default_to_new_world(tmp_path: Path) -> None:
+    world = tmp_path / "new-world"
+
+    init_world(world, seed=42)
+
+    payroll = world / "data" / "payroll.toml"
+    assert payroll.is_file()
+    assert payroll.read_text(encoding="utf-8") == (
+        "per_character_rate = 1.0\n"
+    )
+
+
 def test_bundled_rulebook_hash_is_canonical_semantic_json(tmp_path: Path, monkeypatch) -> None:
     api = economy_api()
     world = tmp_path / "world-without-override"
@@ -334,7 +403,7 @@ def test_legacy_flag_rejects_rulebook_and_any_present_metadata(tmp_path: Path) -
             api.move_dial(state, event, legacy_unclamped=True)
 
 
-def test_wheel_installs_bundled_rulebook_as_readable_package_resource(tmp_path: Path) -> None:
+def test_wheel_installs_economy_and_payroll_resources_readably(tmp_path: Path) -> None:
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     subprocess.run(
@@ -347,6 +416,7 @@ def test_wheel_installs_bundled_rulebook_as_readable_package_resource(tmp_path: 
     wheel = next(wheel_dir.glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         assert "breakroom/data/economy.toml" in archive.namelist()
+        assert "breakroom/data/payroll.toml" in archive.namelist()
 
     install_dir = tmp_path / "installed"
     subprocess.run(
@@ -370,10 +440,12 @@ def test_wheel_installs_bundled_rulebook_as_readable_package_resource(tmp_path: 
         [
             sys.executable,
             "-c",
-            "import breakroom, hashlib; from importlib.resources import files; "
-            "p = files('breakroom').joinpath('data/economy.toml'); "
-            "assert p.is_file(); print(breakroom.__file__); "
-            "print(hashlib.sha256(p.read_bytes()).hexdigest())",
+            "import breakroom, hashlib, sys; from importlib.resources import files; "
+            "from pathlib import Path; from breakroom.economy import load_payroll_rate; "
+            "p = files('breakroom').joinpath('data/payroll.toml'); "
+            "assert p.is_file(); assert load_payroll_rate(Path(sys.argv[1])) == 1.0; "
+            "print(breakroom.__file__); print(hashlib.sha256(p.read_bytes()).hexdigest())",
+            str(tmp_path / "world-without-override"),
         ],
         cwd=tmp_path,
         env=env,
